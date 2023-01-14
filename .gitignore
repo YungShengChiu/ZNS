@@ -1,0 +1,8 @@
+emulator/
+*.tar
+*.tar.*
+*.qcow2
+*.raw
+*.iso
+*.o
+
