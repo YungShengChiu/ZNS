@@ -7,9 +7,11 @@ QEMU_DIR=${ROOT_DIR}/emulator/qemu-${QEMU_VERSION}/build
 VM_FORMAT=qcow2
 VM_ISO=ubuntu-20.04.5-desktop-amd64.iso
 VM_IMG=ubuntu_zns.img
-VM_SIZE=20G
-VM_MEM=4096
-VM_NPROC=4
+VM_SIZE=32G
+VM_MEM=8192
+VM_NPROC=$(nproc)
+VM_SSH_PORT=2222
+
 ZNS_IMG=zns0.raw
 ZNS_SIZE=32G
 
@@ -61,7 +63,6 @@ if [ ! -f ${ROOT_DIR}/${VM_IMG} ]; then
 		-net nic \
 		-vnc :2
 elif [ ${ZNS_IMG_VALID} ]; then
-	echo "You can now access ${VM_IMG} by VNC with ip address 127.0.0.1:5902"
 	${QEMU_DIR}/qemu-system-x86_64 \
 		-hda ${VM_IMG} \
 		-m ${VM_MEM} \
@@ -71,9 +72,12 @@ elif [ ${ZNS_IMG_VALID} ]; then
 		-device nvme,id=${NVME_ID},serial=${NVME_SERIAL},zoned.zasl=${NVME_ZONED_ZASL} \
 		-drive file=${ZNS_IMG},id=${ZNS_NVME_ID},format=${ZNS_NVME_FORMAT},if=none \
 		-device nvme-ns,drive=${ZNS_NVME_ID},bus=${NVME_ID},nsid=${ZNS_NVME_NSID},logical_block_size=${ZNS_NVME_LOGICAL_BLK},physical_block_size=${ZNS_NVME_PHYSICAL_BLK},zoned=true,zoned.zone_size=${ZNS_NVME_ZONE_SIZE},zoned.zone_capacity=${ZNS_NVME_ZONE_CAPACITY},zoned.max_open=${ZNS_NVME_MAX_OPEN},zoned.max_active=${ZNS_NVME_MAX_ACTIVE},uuid=${ZNS_NVME_UUID} \
-		-net user \
+		-net user,hostfwd=tcp::${VM_SSH_PORT}-:22 \
 		-net nic \
 		-vnc :2
+	echo "Access ${VM_IMG} with ip address 127.0.0.1:5902"
+	echo "Port 5902 for VNC"
+	echo "Port 2222 for SSH"
 else
 	echo "ZNS image ${ZNS_IMG} not found!"
 fi
