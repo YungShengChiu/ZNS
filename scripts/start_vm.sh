@@ -63,6 +63,9 @@ if [ ! -f ${ROOT_DIR}/${VM_IMG} ]; then
 		-net nic \
 		-vnc :2
 elif [ ${ZNS_IMG_VALID} ]; then
+	echo "Access ${VM_IMG} with ip address 127.0.0.1:5902"
+	echo "Port 5902 for VNC"
+	echo "Port 2222 for SSH"
 	${QEMU_DIR}/qemu-system-x86_64 \
 		-hda ${VM_IMG} \
 		-m ${VM_MEM} \
@@ -75,9 +78,6 @@ elif [ ${ZNS_IMG_VALID} ]; then
 		-net user,hostfwd=tcp::${VM_SSH_PORT}-:22 \
 		-net nic \
 		-vnc :2
-	echo "Access ${VM_IMG} with ip address 127.0.0.1:5902"
-	echo "Port 5902 for VNC"
-	echo "Port 2222 for SSH"
 else
 	echo "ZNS image ${ZNS_IMG} not found!"
 fi
