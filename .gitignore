@@ -4,5 +4,6 @@ emulator/
 *.qcow2
 *.raw
 *.iso
+*.img
 *.o
 
