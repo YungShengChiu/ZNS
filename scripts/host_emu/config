@@ -17,6 +17,9 @@ VM_VNC_PORT=2
 # Variables for path
 
 QEMU_DIR=${ROOT_DIR}/emulator/qemu-${QEMU_VERSION}/build
+DISK_DIR=${ROOT_DIR}/vm/disks
+LINUX_ISO_DIR=${ROOT_DIR}/vm/Linux_iso
+VM_IMG_DIR=${ROOT_DIR}/vm/vm_img
 
 # Variables for QEMU ZNS configuration
 

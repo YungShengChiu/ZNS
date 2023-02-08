@@ -12,8 +12,8 @@ apt install -y libsasl2-dev libsdl2-dev libseccomp-dev libsnappy-dev libssh-dev
 apt install -y libvde-dev libvdeplug-dev libvte-2.91-dev libxen-dev liblzo2-dev
 apt install -y valgrind xfslibs-dev
 
-ROOT_DIR=$(realpath $(dirname $(dirname $0)))
-. ${ROOT_DIR}/scripts/config
+ROOT_DIR=$(realpath $(dirname $(dirname $(dirname $0))))
+. ${ROOT_DIR}/scripts/host_emu/config
 
 # Get source code
 cd ${ROOT_DIR}

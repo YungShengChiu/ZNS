@@ -1,4 +1,5 @@
 emulator/
+vm/
 *.tar
 *.tar.*
 *.qcow2
