@@ -1,6 +1,9 @@
 #!/bin/bash
 
+
+#
 # Variables for QEMU configuration
+#
 
 QEMU_VERSION=7.1.0
 VM_FORMAT=qcow2
@@ -10,35 +13,59 @@ VM_SIZE=32G
 VM_MEM=8192
 VM_NPROC=$(nproc)
 
+# QEMU port forwarding configuration
 HOST_SSH_PORT=22
 VM_SSH_PORT=2222
 VM_VNC_PORT=2
 
+
+#
 # Variables for path
+#
 
 QEMU_DIR=${ROOT_DIR}/emulator/qemu-${QEMU_VERSION}/build
 DISK_DIR=${ROOT_DIR}/vm/disks
 LINUX_ISO_DIR=${ROOT_DIR}/vm/Linux_iso
 VM_IMG_DIR=${ROOT_DIR}/vm/vm_img
 
-# Variables for QEMU ZNS configuration
+
+#
+# Variables for simulated ZNS disk configuration
+#
 
 ZNS_IMG=zns0.raw
 ZNS_SIZE=32G
 NVME_ID=nvme0
 NVME_SERIAL=deadbeef
+
+# Zone append size limit, default is 0
 NVME_ZONED_ZASL=5
+
+# Name of simulated ZNS disk and format
 ZNS_NVME_ID=nvmezns0
 ZNS_NVME_FORMAT=raw
+
+# Zoned namespace identifier
 ZNS_NVME_NSID=1
+
+# ZNS block size
 ZNS_NVME_LOGICAL_BLK=4096
 ZNS_NVME_PHYSICAL_BLK=4096
+
+# ZNS zone size and capacity
 ZNS_NVME_ZONE_SIZE=64M
 ZNS_NVME_ZONE_CAPACITY=62M
+
+# Maximum number of open zones and active zones
 ZNS_NVME_MAX_OPEN=16
 ZNS_NVME_MAX_ACTIVE=32
+
+# ZNS disk uuid
 ZNS_NVME_UUID=5e40ec5f-eeb6-4317-bc5e-c919796a5f79
 
-# Variables for check
-ZNS_IMG_VALID=false
 
+#
+# Variables for check
+#
+
+ZNS_IMG_VALID=false
