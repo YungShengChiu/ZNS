@@ -1,0 +1,12 @@
+#!/bin/bash
+
+
+#
+# Variables for ZNS
+#
+
+NVME_ID=nvme0
+NVME_NSID=1
+
+# Specific zoned namespace of NVMe SSD
+ZNS_NAME=${NVME_ID}n${NVME_NSID}
