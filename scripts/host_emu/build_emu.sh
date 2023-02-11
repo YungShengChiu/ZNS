@@ -19,21 +19,20 @@ ROOT_DIR=$(realpath $(dirname $(dirname $(dirname $0))))
 cd ${ROOT_DIR}
 [ ! -d ${ROOT_DIR}/emulator ] && mkdir emulator
 cd emulator
-if [ ! -d ${ROOT_DIR}/emulator/qemu-${QEMU_VERSION} ]; then
-	wget https://download.qemu-project.org/qemu-${QEMU_VERSION}.tar.xz
-	tar xvJf qemu-${QEMU_VERSION}.tar.xz
-	rm qemu-${QEMU_VERSION}.tar.xz
+if [ ! -d ${ROOT_DIR}/emulator/qemu ]; then
+    git clone https://github.com/qemu/qemu.git
 fi
 
 # Build
-cd qemu-${QEMU_VERSION}
-[ ! -d ${ROOT_DIR}/emulator/qemu-${QEMU_VERSION}/build ] && mkdir build
-cd build
-if [ ! -f ${ROOT_DIR}/emulator/qemu-${QEMU_VERSION}/build/qemu-system-x86_64 ]; then
+cd qemu
+git checkout v${QEMU_VERSION}
+[ ! -d ${ROOT_DIR}/emulator/qemu/build-${QEMU_VERSION} ] && mkdir build-${QEMU_VERSION}
+cd build-${QEMU_VERSION}
+if [ ! -f ${ROOT_DIR}/emulator/qemu/build-${QEMU_VERSION}/qemu-system-x86_64 ]; then
     ../configure
     make -j$(($(nproc)-1))
 fi
 
 # Check
 echo "Done"
-${ROOT_DIR}/emulator/qemu-${QEMU_VERSION}/build/qemu-system-x86_64 -version
+${ROOT_DIR}/emulator/qemu/build-${QEMU_VERSION}/qemu-system-x86_64 -version
