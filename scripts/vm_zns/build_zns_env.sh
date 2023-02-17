@@ -1,9 +1,9 @@
 #!/bin/bash
 
 # Install dependencies and tools
-apt install -y gcc git fio make
+apt install -y gcc git fio make meson
 apt install -y util-linux lsscsi nvme-cli sg3-utils
-apt install -y libblkid1 libblkid-dev libzbd2 libzbd-dev zbd-utils
+apt install -y libblkid1 libblkid-dev libzbd2 libzbd-dev zbd-utils libnvme-dev
 
 ROOT_DIR=$(realpath $(dirname $(dirname $(dirname $0))))
 
