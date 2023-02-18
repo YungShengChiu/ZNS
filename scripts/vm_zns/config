@@ -2,6 +2,20 @@
 
 
 #
+# Variables for path
+#
+
+SPDK_DIR=${ROOT_DIR}/spdk
+
+
+#
+# Variables for SPDK configuration
+#
+
+SPDK_VERSION=22.01.2
+
+
+#
 # Variables for ZNS
 #
 
