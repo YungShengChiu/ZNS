@@ -146,13 +146,13 @@ static void hello_world(void)
         for (; !sequence.is_completed; spdk_nvme_qpair_process_completions(sequence.ns_entry->qpair, 0));
         sequence.is_completed = 0;
         
-        // Store the string into buffer (CMB/HMB).
+        // Store the string into buffer (HMB).
         fprintf(stdout, "Store the string into buffer.\n");
         snprintf(sequence.buf, 0x1000, "%s", "Hello world!\n");
         
         // Write the data buffer to LBA 0 of the namespace.
         fprintf(stdout, "Write the data buffer to zone.\n");
-        rc = spdk_nvme_ns_cmd_write(ns_entry->ns, ns_entry->qpair, sequence.buf, 0, 1, write_complete, &sequence, 0);
+        rc = spdk_nvme_zns_zone_append(ns_entry->ns, ns_entry->qpair, sequence.buf, 0, 1, write_complete, &sequence, 0);
         if (rc) {
             fprintf(stderr, "Starting write I/O failed!\n");
             exit(1);
@@ -172,6 +172,9 @@ static void hello_world(void)
             fprintf(stderr, "Starting read I/O failed!\n");
             exit(1);
         }
+        
+        // Poll for Read completed.
+        for (; !sequence.is_completed; spdk_nvme_qpair_process_completions(ns_entry->qpair, 0));
         
         // Free the I/O qpair.
         fprintf(stdout, "Free the I/O queues.\n");
