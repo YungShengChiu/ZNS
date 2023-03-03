@@ -48,13 +48,11 @@ static void register_ns(struct spdk_nvme_ctrlr *ctrlr, struct spdk_nvme_ns *ns)
     ns_entry->ns = ns;
     TAILQ_INSERT_TAIL(&g_nss, ns_entry, link);
     
-    fprintf(stdout, "Namespace ID: %d size: %juGB\n", spdk_nvme_ns_get_id(ns_entry->ns), spdk_nvme_ns_get_size(ns_entry->ns) / 1000000000);
 }
 
 static void reset_zone_complete(void *arg, const struct spdk_nvme_cpl *cpl)
 {
     struct sequence *sequence = (struct sequence *)arg;
-    sequence->is_completed = 1;
     
     int rc = spdk_nvme_cpl_is_error(cpl);
     if (rc) {
@@ -64,6 +62,8 @@ static void reset_zone_complete(void *arg, const struct spdk_nvme_cpl *cpl)
         sequence->is_completed = 1;
         exit(1);
     }
+    
+    sequence->is_completed = 1;
 }
 
 static void write_complete(void *arg, const struct spdk_nvme_cpl *cpl)
@@ -80,18 +80,13 @@ static void write_complete(void *arg, const struct spdk_nvme_cpl *cpl)
     }
     
     // Free the buffer associated with the write I/O.
-    if (sequence->using_cmb_io)
-        spdk_nvme_ctrlr_unmap_cmb(sequence->ns_entry->ctrlr);
-    else
-        spdk_free(sequence->buf);
-    
     sequence->is_completed = 1;
+    spdk_free(sequence->buf);
 }
 
 static void read_complete(void *arg, const struct spdk_nvme_cpl *cpl)
 {
     struct sequence *sequence = (struct sequence *)arg;
-    sequence->is_completed = 1;
     
     int rc = spdk_nvme_cpl_is_error(cpl);
     if (rc) {
@@ -104,6 +99,7 @@ static void read_complete(void *arg, const struct spdk_nvme_cpl *cpl)
     
     // Print the contents of the buffer and free the buffer.
     fprintf(stdout, "%s", sequence->buf);
+    sequence->is_completed = 1;
     spdk_free(sequence->buf);
 }
 
@@ -114,6 +110,10 @@ static void hello_world(void)
     int rc;
     
     TAILQ_FOREACH(ns_entry, &g_nss, link) {
+        // Print the namespace information
+        fprintf(stdout, "Namespace ID: %d\n", spdk_nvme_ns_get_id(ns_entry->ns));
+        fprintf(stdout, "Size: %juGB\n", spdk_nvme_ns_get_size(ns_entry->ns) / 1000000000);
+
         ns_entry->qpair = spdk_nvme_ctrlr_alloc_io_qpair(ns_entry->ctrlr, NULL, 0);
         if (!ns_entry->qpair) {
             fprintf(stderr, "Controller I/O qpair allocation failed!");
@@ -127,10 +127,7 @@ static void hello_world(void)
             fprintf(stderr, "Write buffer allocation failed!\n");
             return;
         }
-        if (sequence.using_cmb_io)
-            fprintf(stdout, "Using controller memory buffer for I/O.\n");
-        else
-            fprintf(stdout, "Using host memory buffer for I/O.\n");
+        fprintf(stdout, "Using host memory buffer for I/O.\n");
         sequence.is_completed = 0;
         sequence.ns_entry = ns_entry;
         
@@ -160,6 +157,7 @@ static void hello_world(void)
         
         // Poll for Write completed.
         for (; !sequence.is_completed; spdk_nvme_qpair_process_completions(ns_entry->qpair, 0));
+        sequence.is_completed = 0;
         
         // Allocate a new buffer for reading the data back from the NVMe namespace.
         fprintf(stdout, "Allocate host memory buffer.\n");
@@ -175,6 +173,7 @@ static void hello_world(void)
         
         // Poll for Read completed.
         for (; !sequence.is_completed; spdk_nvme_qpair_process_completions(ns_entry->qpair, 0));
+        sequence.is_completed = 0;
         
         // Free the I/O qpair.
         fprintf(stdout, "Free the I/O queues.\n");
