@@ -1,0 +1,18 @@
+[global]
+name=seq_read
+rw=read
+bs=4096
+direct=1
+numjobs=1
+zonemode=zbd
+zonesize=67108864
+read_beyond_wp=0
+norandommap=1
+
+[dev1]
+filename=trtype=PCIe traddr=0000.00.04.0 ns=1
+ioengine=spdk
+thread=1
+offset=0
+size=32G
+iodepth=128
