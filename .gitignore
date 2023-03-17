@@ -9,3 +9,4 @@ output/
 *.img
 *.o
 *.d
+*.json
