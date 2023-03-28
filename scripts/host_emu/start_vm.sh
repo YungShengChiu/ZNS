@@ -34,7 +34,7 @@ if [ ! -f ${VM_IMG} ]; then
 		${QEMU_DIR}/qemu-system-x86_64 \
 			-hda ${VM_IMG} \
 			-boot d \
-			-cdrom ${VM_ISO} \
+			-cdrom ${LINUX_ISO_DIR}/${VM_ISO} \
 			-m ${VM_MEM} \
 			-smp ${VM_NPROC} \
 			-cpu host \
