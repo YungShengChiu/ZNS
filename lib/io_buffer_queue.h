@@ -24,7 +24,7 @@ struct io_buffer_q_desc_t {
     uint32_t q_id;
     size_t q_depth;
     size_t q_depth_max;
-    size_t buffer_max;
+    size_t q_buffer_max;
 };
 
 

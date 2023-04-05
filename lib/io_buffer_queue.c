@@ -2,15 +2,15 @@
 
 io_buffer_q_desc_t *io_buffer_q_new(uint32_t q_id, size_t q_depth_max, size_t buffer_max)
 {
-    io_buffer_q_desc_t *q_desc = (io_buffer_q_desc_t *)malloc(sizeof(io_buffer_q_desc_t));
+    io_buffer_q_desc_t *q_desc = (io_buffer_q_desc_t *)calloc(1, sizeof(io_buffer_q_desc_t));
     
-    if (q_desc) {
-        q_desc->q_id = q_id;
-        q_desc->q_depth = 0;
-        q_desc->q_depth_max = q_depth_max;
-        q_desc->buffer_max = buffer_max;
-        CIRCLEQ_INIT(&q_desc->q_head);
-    }
+    if (!q_desc)
+        return NULL;
+
+    q_desc->q_id = q_id;
+    q_desc->q_depth_max = q_depth_max;
+    q_desc->q_buffer_max = buffer_max;
+    CIRCLEQ_INIT(&q_desc->q_head);
     
     return q_desc;
 }
