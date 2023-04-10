@@ -1,18 +1,22 @@
-#include "io_buffer_queue.h"
+#include "zns_io_buffer_queue.h"
 
-#ifndef IO_BUFFER_H
-#define IO_BUFFER_H
+/*
+ *      io_buffer_queue is implement by Linux CIRCLEQ
+ **/
 
-typedef struct io_buffer_q_t io_buffer_q_t;
+#ifndef ZNS_IO_BUFFER_H
+#define ZNS_IO_BUFFER_H
+
+typedef struct io_buffer_entry_t io_buffer_entry_t;
 typedef struct io_buffer_desc_t io_buffer_desc_t;
 
-struct io_buffer_q_t {
-    CIRCLEQ_ENTRY(io_buffer_q_t) io_buffer_q_p;
+struct io_buffer_entry_t {
+    CIRCLEQ_ENTRY(io_buffer_entry_t) io_buffer_entry_p;
     io_buffer_desc_t *io_buffer_desc_p;
     io_buffer_q_desc_t *q_desc_p;
 };
 
-CIRCLEQ_HEAD(buffer_head_t, io_buffer_q_t);
+CIRCLEQ_HEAD(buffer_head_t, io_buffer_entry_t);
 struct io_buffer_desc_t {
     struct buffer_head_t buffer_head;
     struct spdk_nvme_ctrlr *ctrlr;
@@ -23,5 +27,7 @@ struct io_buffer_desc_t {
 };
 
 //  TODO
+
+
 
 #endif

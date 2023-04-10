@@ -2,17 +2,17 @@
 #include <spdk/queue.h>
 #include <spdk/env.h>
 
-#ifndef IO_BUFFER_QUEUE_H
-#define IO_BUFFER_QUEUE_H
-
 /*
  *      io_buffer_queue is implement by Linux CIRCLEQ
  **/
 
+#ifndef ZNS_IO_BUFFER_QUEUE_H
+#define ZNS_IO_BUFFER_QUEUE_H
+
 typedef struct q_entry_t q_entry_t;
 typedef struct io_buffer_q_desc_t io_buffer_q_desc_t;
 
-struct q_entry_t{
+struct q_entry_t {
     CIRCLEQ_ENTRY(q_entry_t) q_entry_p;
     io_buffer_q_desc_t *q_desc_p;
     void *payload;

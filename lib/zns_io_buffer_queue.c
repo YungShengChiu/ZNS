@@ -1,4 +1,4 @@
-#include "io_buffer_queue.h"
+#include "zns_io_buffer_queue.h"
 
 io_buffer_q_desc_t *io_buffer_q_new(uint32_t q_id, size_t q_depth_max, size_t buffer_max)
 {
