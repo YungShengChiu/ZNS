@@ -7,6 +7,8 @@
 #ifndef ZNS_IO_BUFFER_H
 #define ZNS_IO_BUFFER_H
 
+extern io_buffer_desc_t *io_buffer_desc;
+
 typedef struct io_buffer_entry_t io_buffer_entry_t;
 typedef struct io_buffer_desc_t io_buffer_desc_t;
 
@@ -26,8 +28,26 @@ struct io_buffer_desc_t {
     uint8_t q_max_nums;
 };
 
+io_buffer_desc_t *io_buffer_new(void);
+
+int io_buffer_q_init(uint32_t q_id, size_t q_depth_max, size_t buffer_max);
+
+int io_buffer_enqueue(io_buffer_entry_t *io_buffer_entry);
+
+int io_buffer_dequeue(io_buffer_entry_t **io_buffer_entry);
+
+int io_buffer_free(void);
+
+static inline void io_buffer_insert_front(io_buffer_entry_t *io_buffer_entry)
+{
+    CIRCLEQ_INSERT_HEAD(&io_buffer_entry->io_buffer_desc_p->buffer_head, io_buffer_entry, io_buffer_entry_p);
+}
+
+static inline void io_buffer_remove(io_buffer_entry_t *io_buffer_entry)
+{
+    CIRCLEQ_REMOVE(&io_buffer_entry->io_buffer_desc_p->buffer_head, io_buffer_entry, io_buffer_entry_p);
+}
+
 //  TODO
-
-
 
 #endif

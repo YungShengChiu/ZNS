@@ -1,7 +1,7 @@
 #include <spdk/stdinc.h>
 #include <spdk/nvme.h>
 #include <spdk/nvme_zns.h>
-#include "io_buffer.h"
+#include "zns_io_buffer.h"
 #include "zns_io_map.h"
 
 /*
@@ -11,6 +11,9 @@
 
 #ifndef ZNS_IO_H
 #define ZNS_IO_H
+
+//struct spdk_env_opts g_env_opts;
+//struct spdk_nvme_transport_id g_trid = {};
 
 int zns_env_init(struct spdk_env_opts *opts, struct spdk_nvme_transport_id *trid, uint32_t nsid);
 

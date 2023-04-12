@@ -28,8 +28,9 @@ int io_buffer_q_enqueue(io_buffer_q_desc_t *q_desc, void *arg)
     q_entry->payload = arg;
     q_entry->q_desc_p = q_desc;
     
-    CIRCLEQ_INSERT_HEAD(&q_desc->q_head, q_entry, q_entry_p);
+    io_buffer_q_insert_front(q_entry);
     q_desc->q_depth++;
+
     return 0;
 }
 
@@ -37,12 +38,13 @@ int io_buffer_q_dequeue(io_buffer_q_desc_t *q_desc, q_entry_t **q_entry)
 {
     if (!q_desc)
         return 1;
-    if (CIRCLEQ_EMPTY(&q_desc->q_head))
+    if (!q_desc->q_depth)
         return 2;
     
     *q_entry = CIRCLEQ_LAST(&q_desc->q_head);
     io_buffer_q_remove(*q_entry);
     q_desc->q_depth--;
+
     return 0;
 }
 
@@ -52,12 +54,14 @@ int io_buffer_q_free(io_buffer_q_desc_t *q_desc)
         return -1;
     
     int rc;
-    for (q_entry_t *q_entry; !CIRCLEQ_EMPTY(&q_desc->q_head); spdk_free(io_buffer_q_release_entry(q_entry))) {
+    q_entry_t *q_entry;
+    for (; !q_desc->q_depth; spdk_free(io_buffer_q_release_entry(q_entry))) {
         rc = io_buffer_q_dequeue(q_desc, &q_entry);
         if (rc)
             return rc;
     }
     
     free(q_desc);
+
     return 0;
 }

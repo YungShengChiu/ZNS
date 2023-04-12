@@ -1,12 +1,9 @@
 #include "zns_io.h"
 
-//static struct spdk_env_opts g_env_opts;
-//static struct spdk_nvme_transport_id g_trid = {};
-static io_buffer_desc_t *io_buffer_desc;
-
 // These variables represent the power of two of the real size
 static uint8_t pow2_zone_size;
 static uint8_t pow2_block_size;
+io_buffer_desc_t *io_buffer_desc;
 
 static bool probe_cb(void *cb_ctx, const struct spdk_nvme_transport_id *trid, struct spdk_nvme_ctrlr_opts *opts)
 {
