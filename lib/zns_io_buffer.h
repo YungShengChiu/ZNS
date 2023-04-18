@@ -1,7 +1,7 @@
 #include "zns_io_buffer_queue.h"
 
 /*
- *      io_buffer_queue is implement by Linux CIRCLEQ
+ *      The io_buffer_queue is implemented by Linux CIRCLEQ
  **/
 
 #ifndef ZNS_IO_BUFFER_H
@@ -24,13 +24,14 @@ struct io_buffer_desc_t {
     struct spdk_nvme_ctrlr *ctrlr;
     struct spdk_nvme_ns *ns;
     struct spdk_nvme_qpair *qpair;
+    pthread_mutex_t io_buffer_mutex;
     uint8_t q_nums;
     uint8_t q_max_nums;
 };
 
 io_buffer_desc_t *io_buffer_new(void);
 
-int io_buffer_q_init(uint32_t q_id, size_t q_depth_max, size_t buffer_max);
+int io_buffer_q_find_or_init(io_buffer_entry_t **io_buffer_entry, uint32_t q_id, size_t q_depth_max, size_t buffer_max);
 
 int io_buffer_enqueue(io_buffer_entry_t *io_buffer_entry);
 

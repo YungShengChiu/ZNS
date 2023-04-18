@@ -1,6 +1,7 @@
 #include "zns_io_buffer.h"
 
 io_buffer_desc_t *io_buffer_desc;
+extern pthread_mutex_t io_buffer_mutex;
 
 io_buffer_desc_t *io_buffer_new(void)
 {
@@ -12,22 +13,21 @@ io_buffer_desc_t *io_buffer_new(void)
     return desc;
 }
 
-int io_buffer_q_init(uint32_t q_id, size_t q_depth_max, size_t buffer_max)
+int io_buffer_q_find_or_init(io_buffer_entry_t **io_buffer_entry, uint32_t q_id, size_t q_depth_max, size_t buffer_max)
 {
-    io_buffer_entry_t *io_buffer_entry;
-    CIRCLEQ_FOREACH(io_buffer_entry, &io_buffer_desc->buffer_head, io_buffer_entry_p) {
-        if (q_id == io_buffer_entry->q_desc_p->q_id)
+    CIRCLEQ_FOREACH(*io_buffer_entry, &io_buffer_desc->buffer_head, io_buffer_entry_p) {
+        if (q_id == *io_buffer_entry->q_desc_p->q_id)
             return 1;
     }
 
-    io_buffer_entry = (io_buffer_entry_t *)malloc(sizeof(io_buffer_entry_t));
+    *io_buffer_entry = (io_buffer_entry_t *)malloc(sizeof(io_buffer_entry_t));
     if (!io_buffer_entry)
         return 2;
 
-    io_buffer_entry->io_buffer_desc_p = io_buffer_desc;
-    io_buffer_entry->q_desc_p = io_buffer_q_new(q_id, q_depth_max, buffer_max);
-    if (!io_buffer_entry->q_desc_p) {
-        free(io_buffer_entry);
+    *io_buffer_entry->io_buffer_desc_p = io_buffer_desc;
+    *io_buffer_entry->q_desc_p = io_buffer_q_new(*io_buffer_entry, q_id, q_depth_max, buffer_max);
+    if (!*io_buffer_entry->q_desc_p) {
+        free(*io_buffer_entry);
         return 3;
     }
 

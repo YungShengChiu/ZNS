@@ -1,12 +1,13 @@
 #include "zns_io_buffer_queue.h"
 
-io_buffer_q_desc_t *io_buffer_q_new(uint32_t q_id, size_t q_depth_max, size_t buffer_max)
+io_buffer_q_desc_t *io_buffer_q_new(io_buffer_entry_t *io_buffer_entry_p, uint32_t q_id, size_t q_depth_max, size_t buffer_max)
 {
     io_buffer_q_desc_t *q_desc = (io_buffer_q_desc_t *)calloc(1, sizeof(io_buffer_q_desc_t));
     
     if (!q_desc)
         return NULL;
 
+    q_desc->io_buffer_entry_p = io_buffer_entry_p;
     q_desc->q_id = q_id;
     q_desc->q_depth_max = q_depth_max;
     q_desc->q_buffer_max = buffer_max;

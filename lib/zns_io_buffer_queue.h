@@ -3,7 +3,7 @@
 #include <spdk/env.h>
 
 /*
- *      io_buffer_queue is implement by Linux CIRCLEQ
+ *      The io_buffer_queue is implemented by Linux CIRCLEQ
  **/
 
 #ifndef ZNS_IO_BUFFER_QUEUE_H
@@ -21,14 +21,16 @@ struct q_entry_t {
 CIRCLEQ_HEAD(q_head_t, q_entry_t);
 struct io_buffer_q_desc_t {
     struct q_head_t q_head;
+    io_buffer_entry_t *io_buffer_entry_p;
     uint32_t q_id;
     size_t q_depth;
     size_t q_depth_max;
+    size_t q_buffer;
     size_t q_buffer_max;
 };
 
 
-io_buffer_q_desc_t *io_buffer_q_new(uint32_t q_id, size_t q_depth_max, size_t buffer_max);
+io_buffer_q_desc_t *io_buffer_q_new(io_buffer_entry_t *io_buffer_entry_p, uint32_t q_id, size_t q_depth_max, size_t buffer_max);
 
 int io_buffer_q_enqueue(io_buffer_q_desc_t *q_desc, void *arg);
 
