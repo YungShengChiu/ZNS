@@ -23,6 +23,6 @@ int zns_io_write(void *payload, uint64_t zslba, uint32_t lba_count);
 
 int zns_io_read(void *payload, uint64_t lba, uint32_t lba_count);
 
-int zns_reset_zone(uint64_t zslba);
+int zns_reset_zone(uint64_t zslba, bool select_all);
 
 #endif

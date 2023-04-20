@@ -16,6 +16,7 @@ struct q_entry_t {
     CIRCLEQ_ENTRY(q_entry_t) q_entry_p;
     io_buffer_q_desc_t *q_desc_p;
     void *payload;
+    uint32_t size;
 };
 
 CIRCLEQ_HEAD(q_head_t, q_entry_t);
@@ -27,6 +28,7 @@ struct io_buffer_q_desc_t {
     size_t q_depth_max;
     size_t q_buffer;
     size_t q_buffer_max;
+    uint64_t z_wp;
 };
 
 
