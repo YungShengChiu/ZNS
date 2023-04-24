@@ -31,7 +31,9 @@ struct io_buffer_desc_t {
 
 io_buffer_desc_t *io_buffer_new(void);
 
-int io_buffer_q_find_or_init(io_buffer_entry_t **io_buffer_entry, uint32_t q_id, size_t q_depth_max, size_t buffer_max);
+io_buffer_entry_t *io_buffer_q_find(io_buffer_entry_t **io_buffer_entry, uint32_t q_id);
+
+int io_buffer_q_init(io_buffer_entry_t **io_buffer_entry, uint32_t q_id, size_t q_size_max);
 
 int io_buffer_enqueue(io_buffer_entry_t *io_buffer_entry);
 

@@ -12,19 +12,28 @@ io_buffer_desc_t *io_buffer_new(void)
     return desc;
 }
 
-int io_buffer_q_find_or_init(io_buffer_entry_t **io_buffer_entry, uint32_t q_id, size_t q_depth_max, size_t buffer_max)
+/**
+ *      This function is used to find the io_buffer_entry_t by q_id.
+ *      If the io_buffer_entry_t is not found, it will be initialized.
+ */
+int io_buffer_q_find(io_buffer_entry_t **io_buffer_entry, uint32_t q_id)
 {
     CIRCLEQ_FOREACH(*io_buffer_entry, &io_buffer_desc->buffer_head, io_buffer_entry_p) {
         if (q_id == *io_buffer_entry->q_desc_p->q_id)
             return 1;
     }
+    return 0;
+}
 
+
+int io_buffer_q_init(io_buffer_entry_t **io_buffer_entry, uint32_t q_id, size_t q_size_max)
+{
     *io_buffer_entry = (io_buffer_entry_t *)malloc(sizeof(io_buffer_entry_t));
-    if (!io_buffer_entry)
+    if (!*io_buffer_entry)
         return 2;
 
     *io_buffer_entry->io_buffer_desc_p = io_buffer_desc;
-    *io_buffer_entry->q_desc_p = io_buffer_q_new(*io_buffer_entry, q_id, q_depth_max, buffer_max);
+    *io_buffer_entry->q_desc_p = io_buffer_q_new(*io_buffer_entry, q_id, q_size_max);
     if (!*io_buffer_entry->q_desc_p) {
         free(*io_buffer_entry);
         return 3;
@@ -119,27 +128,5 @@ int io_buffer_reset_zone(uint32_t q_id, bool select_all)
 
     return 0;
 }
-/*
-int io_buffer_wb_zone(io_buffer_entry_t *io_buffer_entry, uint32_t nr_blocks)
-{
-    if (!io_buffer_desc)
-        return 1;
-    
-    if (!io_buffer_entry)
-        return 2;
-    
-    uint64_t zslba = io_buffer_entry->q_desc_p->q_id * nr_blocks;
-    io_buffer_q_desc_t *q_desc = io_buffer_entry->q_desc_p;
-    q_entry_t *q_entry = NULL;
-    int rc;
-    for (; q_desc->q_depth;) {
-        io_buffer_q_dequeue(q_desc, &q_entry);
-        rc = spdk_nvme_zns_zone_append(io_buffer_desc->ns, io_buffer_desc->qpair, q_entry->payload, zslba, q_entry->size, );
-    }
 
-    int rc = io_buffer_q_free(io_buffer_entry->q_desc_p);
-
-    return 0;
-}
-*/
 //  TODO

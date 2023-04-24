@@ -9,6 +9,16 @@
 
 extern io_map_desc_t *io_map_desc;
 
+enum zone_state {
+    ZONE_STATE_EMPTY = 0,
+    ZONE_STATE_IMP_OPEN,
+    ZONE_STATE_EXP_OPEN,
+    ZONE_STATE_FULL,
+    ZONE_STATE_CLOSED,
+    ZONE_STATE_OFFLINE,
+    ZONE_STATE_READONLY
+};
+
 typedef struct io_map_desc_t io_map_desc_t;
 typedef struct io_map_entry_t io_map_entry_t;
 
@@ -32,6 +42,7 @@ struct io_map_desc_t {
     uint64_t nr_zones;
     io_map_entry_t *io_map;
     uint64_t *write_ptr;
+    uint8_t *zone_state;
 };
 
 io_map_desc_t *io_map_new(void);

@@ -24,17 +24,15 @@ struct io_buffer_q_desc_t {
     struct q_head_t q_head;
     io_buffer_entry_t *io_buffer_entry_p;
     uint32_t q_id;
-    size_t q_depth;
-    size_t q_depth_max;
-    size_t q_buffer;
-    size_t q_buffer_max;
+    size_t q_size;
+    size_t q_size_max;
     uint64_t z_wp;
 };
 
 
-io_buffer_q_desc_t *io_buffer_q_new(io_buffer_entry_t *io_buffer_entry_p, uint32_t q_id, size_t q_depth_max, size_t buffer_max);
+io_buffer_q_desc_t *io_buffer_q_new(io_buffer_entry_t *io_buffer_entry_p, uint32_t q_id, size_t size_max);
 
-int io_buffer_q_enqueue(io_buffer_q_desc_t *q_desc, void *arg);
+int io_buffer_q_enqueue(io_buffer_q_desc_t *q_desc, void *arg, uint32_t arg_size);
 
 int io_buffer_q_dequeue(io_buffer_q_desc_t *q_desc, q_entry_t **q_entry);
 

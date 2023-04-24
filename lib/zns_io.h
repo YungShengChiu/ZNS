@@ -19,7 +19,7 @@ int zns_env_init(struct spdk_env_opts *opts, struct spdk_nvme_transport_id *trid
 
 void zns_env_fini(struct spdk_nvme_ctrlr *ctrlr);
 
-int zns_io_write(void *payload, uint64_t zslba, uint32_t lba_count);
+int zns_io_append(void *payload, uint64_t zslba, uint32_t lba_count);
 
 int zns_io_read(void *payload, uint64_t lba, uint32_t lba_count);
 

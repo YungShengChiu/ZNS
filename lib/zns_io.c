@@ -1,7 +1,6 @@
 #include "zns_io.h"
 #include "zns_io_map.h"
 
-// These variables represent the power of two of the real size
 static uint64_t nr_blocks_in_zone;
 static uint64_t nr_blocks_in_ns;
 static size_t block_size;
@@ -28,7 +27,8 @@ static void attach_cb(void *cb_ctx, const struct spdk_nvme_transport_id *trid, s
 
 static void zns_write_cb(void *arg, const struct spdk_nvme_cpl *cpl)
 {
-    *(bool *)arg = true;
+    if (arg)
+        *(bool *)arg = true;
     
     int rc = spdk_nvme_cpl_is_error(cpl);
     if (rc) {
@@ -39,7 +39,8 @@ static void zns_write_cb(void *arg, const struct spdk_nvme_cpl *cpl)
 
 static void zns_read_cb(void *arg, const struct spdk_nvme_cpl *cpl)
 {
-    *(bool *)arg = true;
+    if (arg)
+        *(bool *)arg = true;
     
     int rc = spdk_nvme_cpl_is_error(cpl);
     if (rc) {
@@ -64,7 +65,7 @@ static void zns_reset_zone_cb(void *arg, const struct spdk_nvme_cpl *cpl)
 
     struct reset_args *args = (struct reset_args *)arg;
     io_map_reset_zone(args->zslba, args->select_all);
-    io_buffer_reset_zone(args->zslba >> , args->select_all);
+    io_buffer_reset_zone(args->zslba / nr_blocks_in_zone, args->select_all);
     pthread_mutex_unlock(&io_buffer_desc->io_buffer_mutex);
     free(args);
 }
@@ -73,14 +74,19 @@ static void zns_reset_zone_cb(void *arg, const struct spdk_nvme_cpl *cpl)
  *      The function is a critical section
  */
 
-static void io_buffer_upsert(q_entry_t *q_entry)
+static void io_buffer_upsert(io_buffer_entry_t *io_buffer_entry)
 {
-    io_buffer_entry_t *io_buffer_entry = q_entry->q_desc_p->io_buffer_entry_p;
+    pthread_mutex_lock(&io_buffer_desc->io_buffer_mutex);
+    io_buffer_remove(io_buffer_entry);
+    io_buffer_insert_front(io_buffer_entry);
+    pthread_mutex_unlock(&io_buffer_desc->io_buffer_mutex);
+}
+
+static void io_buffer_q_upsert(q_entry_t *q_entry)
+{
     pthread_mutex_lock(&io_buffer_desc->io_buffer_mutex);
     io_buffer_q_remove(q_entry);
     io_buffer_q_insert_front(q_entry);
-    io_buffer_remove(io_buffer_entry);
-    io_buffer_insert_front(io_buffer_entry);
     pthread_mutex_unlock(&io_buffer_desc->io_buffer_mutex);
 }
 
@@ -275,7 +281,7 @@ int zns_io_reset_zone(uint64_t zslba, bool select_all)
  *      The mapping mechanism is not done yet.
  */
 
-int zns_io_write(void *payload, uint64_t zslba, uint32_t lba_count)
+int zns_io_append(void *payload, uint64_t zslba, uint32_t lba_count)
 {   
     if (zslba >= nr_blocks_in_ns) {
         fprintf(stderr, "LBA %lx is out of the range of the namespace!\n", zslba);
@@ -292,46 +298,142 @@ int zns_io_write(void *payload, uint64_t zslba, uint32_t lba_count)
         return 3;
     }
 
-    uint32_t z_id = zslba >> pow2_block_size;
+    uint32_t z_id = zslba / nr_blocks_in_zone;
     size_t data_size = lba_count << pow2_block_size;
-    io_buffer_entry_t *io_buffer_entry;
-    void *buf = spdk_zmalloc(data_size, block_size, NULL, SPDK_ENV_SOCKET_ID_ANY, SPDK_MALLOC_DMA);
-    int rc = io_buffer_q_find_or_init(&io_buffer_entry, z_id, nr_blocks_in_zone, nr_blocks_in_zone << pow2_block_size);
-    switch (rc)
-    {
-    case 0x0:
-
-        break;
-    case 0x1:
-        memcpy(buf, payload, data_size);
-        io_buffer_q_desc_t *io_buffer_q_desc = io_buffer_entry->io_buffer_q_desc;
-        q_entry_t *q_entry;
-        if (io_buffer_q_desc->q_depth >= io_buffer_q_desc->q_depth_max) {
-            rc = io_buffer_q_dequeue(io_buffer_q_desc, &q_entry);
+    io_buffer_entry_t *io_buffer_entry = NULL;
+    void *buf = NULL;
+    int rc;
+    switch (io_map_desc->zone_state[z_id]) {
+        case ZNS_ZONE_STATE_EMPTY:
+            io_map_desc->zone_state[z_id] = ZNS_ZONE_STATE_IMP_OPEN;
+            rc = io_buffer_q_init(&io_buffer_entry, z_id, nr_blocks_in_zone);
             if (rc) {
-                //  TODO
-                return rc;
+                //  TODO: handle error
             }
-            rc = spdk_nvme_zns_zone_append();
-            //  TODO
-        }
-        for (; data_size + io_buffer_q_desc->q_buffer > io_buffer_q_desc->q_buffer_max;) {
-            rc = io_buffer_q_dequeue(io_buffer_q_desc, &q_entry);
-            if (rc) {
-                //  TODO
-                return rc;
+            
+            io_buffer_entry_t *io_buffer_wb_entry;
+            pthread_mutex_lock(&io_buffer_desc->io_buffer_mutex);
+            for (; io_buffer_desc->q_nums >= io_buffer_desc->max_q_nums; ) {
+                rc = io_buffer_dequeue(&io_buffer_wb_entry);
+                if (rc) {
+                    //  TODO: handle error
+                    break;
+                }
+
+                rc = io_buffer_wb_zone(io_buffer_wb_entry);
+                if (rc) {
+                    //  TODO: handle error
+                    break;
+                }
             }
 
-            rc = spdk_nvme_zns_zone_append();
-            //  TODO
-        }
-        break;
-    case 0x2:
-        break;
-    case 0x3:
-        break;
-    default:
-        break;
+            rc = io_buffer_desc->io_buffer_enqueue(io_buffer_entry);
+            if (rc) {
+                //  TODO: handle error
+            }
+
+            buf = spdk_zmalloc(data_size, block_size, NULL, SPDK_ENV_SOCKET_ID_ANY, SPDK_MALLOC_DMA);
+            memcpy(buf, payload, data_size);
+            
+            rc = io_buffer_q_enqueue(io_buffer_entry->q_desc_p, buf, lba_count);
+            if (rc) {
+                // TODO: handle error
+            }
+
+            pthread_mutex_unlock(&io_buffer_desc->io_buffer_mutex);
+
+            break;
+
+        case ZNS_ZONE_STATE_IMP_OPEN:
+        case ZNS_ZONE_STATE_EXP_OPEN:
+            rc = io_buffer_q_find(&io_buffer_entry, z_id);
+            if (!rc) {
+                //  TODO: handle error
+            }
+            
+            if (io_buffer_entry->q_desc_p->q_buffer + lba_count >= zslba + nr_blocks_in_zone) {
+                fprintf(stderr, "Zone %d doesn't have enough capacity!\n", z_id);
+                return 4;
+            }
+
+            pthread_mutex_lock(&io_buffer_desc->io_buffer_mutex);
+            
+            buf = spdk_zmalloc(data_size, block_size, NULL, SPDK_ENV_SOCKET_ID_ANY, SPDK_MALLOC_DMA);
+            memcpy(buf, payload, data_size);
+            
+            rc = io_buffer_q_enqueue(io_buffer_entry->q_desc_p, buf, lba_count);
+            if (rc) {
+                // TODO: handle error
+            }
+
+            pthread_mutex_unlock(&io_buffer_desc->io_buffer_mutex);
+
+            io_buffer_upsert(io_buffer_entry);
+
+            break;
+
+        case ZNS_ZONE_STATE_CLOSED:
+            io_map_desc->zone_state[z_id] = ZNS_ZONE_STATE_IMP_OPEN;
+            rc = io_buffer_q_find(&io_buffer_entry, z_id);
+            if (rc) {
+                if (io_buffer_entry->q_desc_p->q_buffer + lba_count >= io_buffer_entry->q_desc_p->q_buffer_max) {
+                    fprintf(stderr, "Zone %d doesn't have enough capacity!\n", z_id);
+                    return 4;
+                }
+
+                pthread_mutex_lock(&io_buffer_desc->io_buffer_mutex);
+                
+                buf = spdk_zmalloc(data_size, block_size, NULL, SPDK_ENV_SOCKET_ID_ANY, SPDK_MALLOC_DMA);
+                memcpy(buf, payload, data_size);
+                
+                rc = io_buffer_q_enqueue(io_buffer_entry->q_desc_p, buf, lba_count);
+                if (rc) {
+                    // TODO: handle error
+                }
+
+                pthread_mutex_unlock(&io_buffer_desc->io_buffer_mutex);
+
+                io_buffer_upsert(io_buffer_entry);
+
+            } else {
+                uint64_t available_entry = nr_blocks_in_zone - (io_map_desc->write_ptr[z_id] - zslba);
+                rc = io_buffer_q_init(&io_buffer_entry, z_id, available_entry);
+                if (rc) {
+                    //  TODO: handle error
+                }
+
+                buf = spdk_zmalloc(data_size, block_size, NULL, SPDK_ENV_SOCKET_ID_ANY, SPDK_MALLOC_DMA);
+                memcpy(buf, payload, data_size);
+                
+                rc = io_buffer_q_enqueue(io_buffer_entry->q_desc_p, buf, lba_count);
+                if (rc) {
+                    //  TODO: handle error
+                }
+
+                pthread_mutex_lock(&io_buffer_desc->io_buffer_mutex);
+
+                rc = io_buffer_desc->io_buffer_enqueue(io_buffer_entry);
+                if (rc) {
+                    //  TODO: handle error
+                }
+
+                pthread_mutex_unlock(&io_buffer_desc->io_buffer_mutex);
+            }
+
+            break;
+
+        case ZNS_ZONE_STATE_FULL:
+            fprintf(stderr, "Zone %d is full!\n", z_id);
+            return 4;
+        case ZNS_ZONE_STATE_READONLY:
+            fprintf(stderr, "Zone %d is read only!\n", z_id);
+            return 5;
+        case ZNS_ZONE_STATE_OFFLINE:
+            fprintf(stderr, "Zone %d is offline!\n", z_id);
+            return 6;
+        default:
+            fprintf(stderr, "Zone %d is in an unknown state!\n", z_id);
+            return 7;
     }
 
     //  TODO
@@ -362,12 +464,15 @@ int zns_io_read(void *payload, uint64_t lba, uint32_t lba_count)
         return 2;
     case 0x1:
         /* The data is in io_buffer */
-        buf = io_map_desc->io_map[lba].q_entry->payload;
+        q_entry_t *q_entry = io_map_desc->io_map[lba].q_entry;
+        buf = q_entry->payload;
         memcpy(payload, buf, data_size);
-        io_buffer_upsert(io_map_desc->io_map[lba].q_entry);
+        io_buffer_q_upsert(q_entry);
+        io_buffer_upsert(q_entry->q_desc_p->io_buffer_entry_p);
         break;
     case 0x2:
         /* The data is in ZNS */
+        /* The data won't be buffered */
         buf = spdk_zmalloc(data_size, block_size, NULL, SPDK_ENV_SOCKET_ID_ANY, SPDK_MALLOC_DMA);
         if (!buf) {
             fprintf(stderr, "Allocate buffer failed!\n");
@@ -382,10 +487,11 @@ int zns_io_read(void *payload, uint64_t lba, uint32_t lba_count)
         break;
     case 0x3:
         /* The data is in ZNS and io_buffer */
-        buf = io_map_desc->io_map[lba].q_entry->payload;
+        q_entry_t *q_entry = io_map_desc->io_map[lba].q_entry;
+        buf = q_entry->payload;
         memcpy(payload, buf, data_size);
-        io_buffer_upsert(io_map_desc->io_map[lba].q_entry);
-        break;
+        io_buffer_q_upsert(q_entry);
+        io_buffer_upsert(q_entry->q_desc_p->io_buffer_entry_p);
     default:
         fprintf(stderr, "Unknown identifier!\n");
         return 3;
