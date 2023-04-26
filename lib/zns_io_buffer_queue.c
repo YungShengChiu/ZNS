@@ -49,6 +49,24 @@ int io_buffer_q_dequeue(io_buffer_q_desc_t *q_desc, q_entry_t **q_entry)
     return 0;
 }
 
+void io_buffer_q_remove(q_entry_t *q_entry)
+{
+    if (!q_entry)
+        return;
+    
+    CIRCLEQ_REMOVE(&q_entry->q_desc_p->q_head, q_entry, q_entry_p);
+    q_entry->q_desc_p->q_size -= q_entry->size;
+}
+
+void io_buffer_q_insert_front(q_entry_t *q_entry)
+{
+    if (!q_entry)
+        return;
+    
+    CIRCLEQ_INSERT_HEAD(&q_entry->q_desc_p->q_head, q_entry, q_entry_p);
+    q_entry->q_desc_p->q_size += q_entry->size;
+}
+
 int io_buffer_q_free(io_buffer_q_desc_t *q_desc)
 {
     if (!q_desc)

@@ -38,21 +38,15 @@ int io_buffer_q_dequeue(io_buffer_q_desc_t *q_desc, q_entry_t **q_entry);
 
 int io_buffer_q_free(io_buffer_q_desc_t *q_desc);
 
-static inline void *io_buffer_q_release_entry(q_entry_t *q_entry)
+inline void *io_buffer_q_release_entry(q_entry_t *q_entry)
 {
     void *entry_payload = q_entry->payload;
     free(q_entry);
     return entry_payload;
 }
 
-static inline void io_buffer_q_remove(q_entry_t *q_entry)
-{
-    CIRCLEQ_REMOVE(&q_entry->q_desc_p->q_head, q_entry, q_entry_p);
-}
+void io_buffer_q_remove(q_entry_t *q_entry);
 
-static inline void io_buffer_q_insert_front(q_entry_t *q_entry)
-{
-    CIRCLEQ_INSERT_HEAD(&q_entry->q_desc_p->q_head, q_entry, q_entry_p);
-}
+void io_buffer_q_insert_front(q_entry_t *q_entry);
 
 #endif

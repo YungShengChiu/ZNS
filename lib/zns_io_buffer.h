@@ -41,19 +41,11 @@ int io_buffer_dequeue(io_buffer_entry_t **io_buffer_entry);
 
 int io_buffer_free(void);
 
-static inline void io_buffer_insert_front(io_buffer_entry_t *io_buffer_entry)
-{
-    CIRCLEQ_INSERT_HEAD(&io_buffer_entry->io_buffer_desc_p->buffer_head, io_buffer_entry, io_buffer_entry_p);
-}
+void io_buffer_insert_front(io_buffer_entry_t *io_buffer_entry);
 
-static inline void io_buffer_remove(io_buffer_entry_t *io_buffer_entry)
-{
-    CIRCLEQ_REMOVE(&io_buffer_entry->io_buffer_desc_p->buffer_head, io_buffer_entry, io_buffer_entry_p);
-}
+void io_buffer_remove(io_buffer_entry_t *io_buffer_entry);
 
 int io_buffer_reset_zone(uint32_t q_id, bool select_all);
-
-int io_buffer_wb_zone(io_buffer_entry_t *io_buffer_entry, uint32_t nr_blocks);
 
 //  TODO
 

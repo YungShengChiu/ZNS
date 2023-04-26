@@ -1,5 +1,6 @@
 #include "zns_io.h"
 #include "zns_io_map.h"
+#include "zns_io_internal.h"
 
 static uint64_t nr_blocks_in_zone;
 static uint64_t nr_blocks_in_ns;
@@ -49,7 +50,7 @@ static void zns_read_cb(void *arg, const struct spdk_nvme_cpl *cpl)
     }
 }
 
-struct reset_args {
+struct zone_management_args {
     uint64_t zslba;
     bool select_all;
 };
@@ -63,9 +64,71 @@ static void zns_reset_zone_cb(void *arg, const struct spdk_nvme_cpl *cpl)
         //exit(1);
     }
 
-    struct reset_args *args = (struct reset_args *)arg;
+    struct zone_management_args *args = (struct zone_management_args *)arg;
     io_map_reset_zone(args->zslba, args->select_all);
     io_buffer_reset_zone(args->zslba / nr_blocks_in_zone, args->select_all);
+    pthread_mutex_unlock(&io_buffer_desc->io_buffer_mutex);
+    free(args);
+}
+
+static void zns_open_zone_cb(void *arg, const struct spdk_nvme_cpl *cpl)
+{
+    int rc = spdk_nvme_cpl_is_error(cpl);
+    if (rc) {
+        spdk_nvme_qpair_print_completion(io_buffer_desc->qpair, cpl);
+        pthread_mutex_unlock(&io_buffer_desc->io_buffer_mutex);
+        //exit(1);
+    }
+
+    struct zone_management_args *args = (struct zone_management_args *)arg;
+    io_map_desc->zone_state[args->zslba / nr_blocks_in_zone] = ZNS_ZONE_STATE_EXP_OPEN;
+    pthread_mutex_unlock(&io_buffer_desc->io_buffer_mutex);
+    free(args);
+}
+
+static void zns_close_zone_cb(void *arg, const struct spdk_nvme_cpl *cpl)
+{
+    int rc = spdk_nvme_cpl_is_error(cpl);
+    if (rc) {
+        spdk_nvme_qpair_print_completion(io_buffer_desc->qpair, cpl);
+        pthread_mutex_unlock(&io_buffer_desc->io_buffer_mutex);
+        //exit(1);
+    }
+
+    struct zone_management_args *args = (struct zone_management_args *)arg;
+    io_map_desc->zone_state[args->zslba / nr_blocks_in_zone] = ZNS_ZONE_STATE_CLOSED;
+    pthread_mutex_unlock(&io_buffer_desc->io_buffer_mutex);
+    free(args);
+}
+
+static void zns_finish_zone_cb(void *arg, const struct spdk_nvme_cpl *cpl)
+{
+    int rc = spdk_nvme_cpl_is_error(cpl);
+    if (rc) {
+        spdk_nvme_qpair_print_completion(io_buffer_desc->qpair, cpl);
+        pthread_mutex_unlock(&io_buffer_desc->io_buffer_mutex);
+        //exit(1);
+    }
+
+    struct zone_management_args *args = (struct zone_management_args *)arg;
+    uint64_t z_id = args->zslba / nr_blocks_in_zone;
+    io_map_desc->zone_state[z_id] = ZNS_ZONE_STATE_FULL;
+    io_map_desc->write_ptr[z_id] = args->zslba + nr_blocks_in_zone;
+    pthread_mutex_unlock(&io_buffer_desc->io_buffer_mutex);
+    free(args);
+}
+
+static void zns_offline_zone_cb(void *arg, const struct spdk_nvme_cpl *cpl)
+{
+    int rc = spdk_nvme_cpl_is_error(cpl);
+    if (rc) {
+        spdk_nvme_qpair_print_completion(io_buffer_desc->qpair, cpl);
+        pthread_mutex_unlock(&io_buffer_desc->io_buffer_mutex);
+        //exit(1);
+    }
+
+    struct zone_management_args *args = (struct zone_management_args *)arg;
+    io_map_desc->zone_state[args->zslba / nr_blocks_in_zone] = ZNS_ZONE_STATE_OFFLINE;
     pthread_mutex_unlock(&io_buffer_desc->io_buffer_mutex);
     free(args);
 }
@@ -259,7 +322,7 @@ int zns_io_reset_zone(uint64_t zslba, bool select_all)
         return 2;
     }
 
-    struct reset_args *args = (struct reset_args *)malloc(sizeof(struct reset_args));
+    struct zone_management_args *args = (struct zone_management_args *)malloc(sizeof(struct zone_management_args));
     args.zslba = zslba;
     args.select_all = select_all;
 
@@ -271,6 +334,133 @@ int zns_io_reset_zone(uint64_t zslba, bool select_all)
         return rc;
     }
     
+    return 0;
+}
+
+int zns_io_open_zone(uint64_t zslba, bool select_all)
+{
+    if (zslba >= nr_blocks_in_ns) {
+        fprintf(stderr, "LBA %lx is out of the range of the namespace!\n", zslba);
+        return 2;
+    }
+
+    int rc;
+    if (io_buffer_desc->q_nums >= io_buffer_desc->q_max_nums) {
+        io_buffer_entry_t *io_buffer_entry;
+        
+        rc = io_buffer_dequeue(&io_buffer_entry);
+        if (rc) {
+            //  TODO: handle error
+        }
+
+        uint64_t wb_zslba = io_buffer_entry->q_desc_p->q_id * nr_blocks_in_zone;
+
+        rc = io_buffer_wb_zone(io_buffer_entry);
+        if (rc == 1) {
+            //  TODO: handle error
+        } else if (rc == 2) {
+            //  TODO: handle error
+        }
+
+        rc = zns_io_close_zone(wb_zslba, false);
+        if (rc) {
+            //  TODO: handle error
+        }
+
+    }
+
+    struct zone_management_args *args = (struct zone_management_args *)malloc(sizeof(struct zone_management_args));
+    args.zslba = zslba;
+    args.select_all = select_all;
+
+    pthread_mutex_lock(&io_buffer_desc->io_buffer_mutex);
+    rc = spdk_nvme_zns_open_zone(io_buffer_desc->ns, io_buffer_desc->qpair, zslba, select_all, zns_open_zone_cb, args);
+    if (rc) {
+        fprintf(stderr, "Open zone failed!\n");
+        free(args);
+        return rc;
+    }
+    
+    return 0;
+}
+
+/**
+ *      select_all are not support yet in the following three functions
+ */
+
+int zns_io_close_zone(uint64_t zslba, bool select_all)
+{
+    if (zslba >= nr_blocks_in_ns) {
+        fprintf(stderr, "LBA %lx is out of the range of the namespace!\n", zslba);
+        return 2;
+    }
+
+    uint64_t z_id = zslba / nr_blocks_in_zone;
+    io_buffer_entry_t *io_buffer_entry;
+    int rc = io_buffer_q_find(&io_buffer_entry, z_id);
+    if (rc) {
+        io_buffer_remove(io_buffer_entry);
+        rc = io_buffer_wb_zone(io_buffer_entry);
+        if (rc == 1) {
+            //  TODO: handle error
+        } else if (rc == 2) {
+            //  TODO: handle error
+        }
+    }
+
+    struct zone_management_args *args = (struct zone_management_args *)malloc(sizeof(struct zone_management_args));
+    args.zslba = zslba;
+    args.select_all = select_all;
+
+    pthread_mutex_lock(&io_buffer_desc->io_buffer_mutex);
+    rc = spdk_nvme_zns_close_zone(io_buffer_desc->ns, io_buffer_desc->qpair, zslba, select_all, zns_close_zone_cb, args);
+    if (rc) {
+        fprintf(stderr, "Close zone failed!\n");
+        return rc;
+    }
+    
+    return 0;
+}
+
+int zns_io_finish_zone(uint64_t zslba, bool select_all)
+{
+    if (zslba >= nr_blocks_in_ns) {
+        fprintf(stderr, "LBA %lx is out of the range of the namespace!\n", zslba);
+        return 2;
+    }
+
+    struct zone_management_args *args = (struct zone_management_args *)malloc(sizeof(struct zone_management_args));
+    args.zslba = zslba;
+    args.select_all = select_all;
+
+    pthread_mutex_lock(&io_buffer_desc->io_buffer_mutex);
+    int rc = spdk_nvme_zns_finish_zone(io_buffer_desc->ns, io_buffer_desc->qpair, zslba, select_all, zns_finish_zone_cb, args);
+    if (rc) {
+        fprintf(stderr, "Finish zone failed!\n");
+        return rc;
+    }
+    
+    return 0;
+}
+
+int zns_io_offline_zone(uint64_t zslba, bool select_all)
+{
+    if (zslba >= nr_blocks_in_ns) {
+        fprintf(stderr, "LBA %lx is out of the range of the namespace!\n", zslba);
+        return 2;
+    }
+
+    struct zone_management_args *args = (struct zone_management_args *)malloc(sizeof(struct zone_management_args));
+    args.zslba = zslba;
+    args.select_all = select_all;
+    
+    pthread_mutex_lock(&io_buffer_desc->io_buffer_mutex);
+    int rc = spdk_nvme_zns_offline_zone(io_buffer_desc->ns, io_buffer_desc->qpair, zslba, select_all, zns_offline_zone_cb, args);
+    if (rc) {
+        fprintf(stderr, "Offline zone failed!\n");
+        return rc;
+    }
+
     return 0;
 }
 
@@ -298,7 +488,7 @@ int zns_io_append(void *payload, uint64_t zslba, uint32_t lba_count)
         return 3;
     }
 
-    uint32_t z_id = zslba / nr_blocks_in_zone;
+    uint64_t z_id = zslba / nr_blocks_in_zone;
     size_t data_size = lba_count << pow2_block_size;
     io_buffer_entry_t *io_buffer_entry = NULL;
     void *buf = NULL;

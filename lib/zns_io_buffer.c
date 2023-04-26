@@ -90,6 +90,24 @@ int io_buffer_free(void)
     return 0;
 }
 
+void io_buffer_insert_front(io_buffer_entry_t *io_buffer_entry)
+{
+    if (!io_buffer_entry)
+        return;
+    
+    CIRCLEQ_INSERT_HEAD(&io_buffer_desc->buffer_head, io_buffer_entry, io_buffer_entry_p);
+    io_buffer_entry->io_buffer_desc_p->q_nums++;
+}
+
+void io_buffer_remove(io_buffer_entry_t *io_buffer_entry)
+{
+    if (!io_buffer_entry)
+        return;
+    
+    CIRCLEQ_REMOVE(&io_buffer_desc->buffer_head, io_buffer_entry, io_buffer_entry_p);
+    io_buffer_entry->io_buffer_desc_p->q_nums--;
+}
+
 int io_buffer_reset_zone(uint32_t q_id, bool select_all)
 {
     if (!io_buffer_desc)
