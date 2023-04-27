@@ -7,8 +7,6 @@
 #ifndef ZNS_IO_MAP_H
 #define ZNS_IO_MAP_H
 
-extern io_map_desc_t *io_map_desc;
-
 enum zone_state {
     ZONE_STATE_EMPTY = 0,
     ZONE_STATE_IMP_OPEN,
@@ -28,6 +26,7 @@ typedef struct io_map_entry_t io_map_entry_t;
  *      0x1 for only q_entry
  *      0x2 for only ZNS LBA
  *      0x3 for both q_entry and ZNS LBA
+ *      0x11 for part of q_entry
  **/
 
 struct io_map_entry_t {
@@ -41,9 +40,12 @@ struct io_map_desc_t {
     uint64_t zone_size;
     uint64_t nr_zones;
     io_map_entry_t *io_map;
-    uint64_t *write_ptr;
+    uint64_t *buffer_write_ptr;
+    uint64_t *zns_write_ptr;
     uint8_t *zone_state;
 };
+
+extern io_map_desc_t *io_map_desc;
 
 io_map_desc_t *io_map_new(void);
 

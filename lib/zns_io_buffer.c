@@ -1,7 +1,5 @@
 #include "zns_io_buffer.h"
 
-io_buffer_desc_t *io_buffer_desc;
-
 io_buffer_desc_t *io_buffer_new(void)
 {
     io_buffer_desc_t *desc = (io_buffer_desc_t *)calloc(1, sizeof(io_buffer_desc_t));
@@ -19,7 +17,7 @@ io_buffer_desc_t *io_buffer_new(void)
 int io_buffer_q_find(io_buffer_entry_t **io_buffer_entry, uint32_t q_id)
 {
     CIRCLEQ_FOREACH(*io_buffer_entry, &io_buffer_desc->buffer_head, io_buffer_entry_p) {
-        if (q_id == *io_buffer_entry->q_desc_p->q_id)
+        if (q_id == (*io_buffer_entry)->q_desc_p->q_id)
             return 1;
     }
     return 0;
@@ -32,9 +30,9 @@ int io_buffer_q_init(io_buffer_entry_t **io_buffer_entry, uint32_t q_id, size_t 
     if (!*io_buffer_entry)
         return 2;
 
-    *io_buffer_entry->io_buffer_desc_p = io_buffer_desc;
-    *io_buffer_entry->q_desc_p = io_buffer_q_new(*io_buffer_entry, q_id, q_size_max);
-    if (!*io_buffer_entry->q_desc_p) {
+    (*io_buffer_entry)->io_buffer_desc_p = io_buffer_desc;
+    (*io_buffer_entry)->q_desc_p = io_buffer_q_new(*io_buffer_entry, q_id, q_size_max);
+    if (!(*io_buffer_entry)->q_desc_p) {
         free(*io_buffer_entry);
         return 3;
     }
@@ -50,7 +48,6 @@ int io_buffer_enqueue(io_buffer_entry_t *io_buffer_entry)
         return 2;
     
     io_buffer_insert_front(io_buffer_entry);
-    io_buffer_desc->q_nums++;
 
     return 0;
 }
@@ -62,7 +59,6 @@ int io_buffer_dequeue(io_buffer_entry_t **io_buffer_entry)
     
     *io_buffer_entry = CIRCLEQ_LAST(&io_buffer_desc->buffer_head);
     io_buffer_remove(*io_buffer_entry);
-    io_buffer_desc->q_nums--;
 
     return 0;
 }
@@ -74,7 +70,7 @@ int io_buffer_free(void)
     
     int rc;
     io_buffer_entry_t *io_buffer_entry;
-    for (; io_buffer_desc->q_nums; free(io_buffer_entry)) {
+    for (; !CIRCLEQ_EMPTY(&io_buffer_desc->buffer_head); free(io_buffer_entry)) {
         rc = io_buffer_dequeue(&io_buffer_entry);
         if (rc)
             return rc;
@@ -83,7 +79,8 @@ int io_buffer_free(void)
         if (rc)
             return rc;
     }
-
+    
+    pthread_mutex_destroy(&io_buffer_desc->io_buffer_mutex);
     free(io_buffer_desc);
     io_buffer_desc = NULL;
 

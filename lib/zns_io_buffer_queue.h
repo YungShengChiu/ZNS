@@ -12,6 +12,8 @@
 typedef struct q_entry_t q_entry_t;
 typedef struct io_buffer_q_desc_t io_buffer_q_desc_t;
 
+#include "zns_io_buffer.h"
+
 struct q_entry_t {
     CIRCLEQ_ENTRY(q_entry_t) q_entry_p;
     io_buffer_q_desc_t *q_desc_p;
@@ -32,7 +34,7 @@ struct io_buffer_q_desc_t {
 
 io_buffer_q_desc_t *io_buffer_q_new(io_buffer_entry_t *io_buffer_entry_p, uint32_t q_id, size_t size_max);
 
-int io_buffer_q_enqueue(io_buffer_q_desc_t *q_desc, void *arg, uint32_t arg_size);
+int io_buffer_q_enqueue(io_buffer_q_desc_t *q_desc, q_entry_t **q_entry, void *arg, uint32_t arg_size);
 
 int io_buffer_q_dequeue(io_buffer_q_desc_t *q_desc, q_entry_t **q_entry);
 

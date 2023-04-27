@@ -12,22 +12,19 @@
 #ifndef ZNS_IO_H
 #define ZNS_IO_H
 
-extern struct spdk_env_opts *zns_env_opts;
-extern struct spdk_nvme_transport_id *zns_trid;
+int zns_env_init(struct spdk_env_opts *opts, char *opts_name, struct spdk_nvme_transport_id *trid, uint32_t nsid);
 
-int zns_env_init(struct spdk_env_opts *opts, struct spdk_nvme_transport_id *trid, uint32_t nsid);
-
-void zns_env_fini(struct spdk_nvme_ctrlr *ctrlr);
+void zns_env_fini(void);
 
 int zns_reset_zone(uint64_t zslba, bool select_all);
 
-int zns_io_open_zone(uint64_t zslba, bool select_all);
+int zns_open_zone(uint64_t zslba, bool select_all);
 
-int zns_io_close_zone(uint64_t zslba, bool select_all);
+int zns_close_zone(uint64_t zslba, bool select_all);
 
-int zns_io_finish_zone(uint64_t zslba, bool select_all);
+int zns_finish_zone(uint64_t zslba, bool select_all);
 
-int zns_io_offline_zone(uint64_t zslba, bool select_all);
+int zns_offline_zone(uint64_t zslba, bool select_all);
 
 int zns_io_append(void *payload, uint64_t zslba, uint32_t lba_count);
 

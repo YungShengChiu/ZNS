@@ -1,5 +1,4 @@
 #include "zns_io.h"
-#include "zns_io_map.h"
 #include "zns_io_internal.h"
 
 static uint64_t nr_blocks_in_zone;
@@ -8,11 +7,10 @@ static size_t block_size;
 static uint64_t nr_zones;
 static uint32_t zasl;
 static uint8_t pow2_block_size;
+static spdk_struct_t *spdk_struct;
 
-struct spdk_env_opts *zns_env_opts = NULL;
-struct spdk_nvme_transport_id *zns_trid = NULL;
 io_buffer_desc_t *io_buffer_desc = NULL;
-io_map_desc_t *io_map_desc;
+io_map_desc_t *io_map_desc = NULL;
 
 static bool probe_cb(void *cb_ctx, const struct spdk_nvme_transport_id *trid, struct spdk_nvme_ctrlr_opts *opts)
 {
@@ -33,7 +31,7 @@ static void zns_write_cb(void *arg, const struct spdk_nvme_cpl *cpl)
     
     int rc = spdk_nvme_cpl_is_error(cpl);
     if (rc) {
-        spdk_nvme_qpair_print_completion(io_buffer_desc->qpair, cpl);
+        spdk_nvme_qpair_print_completion(spdk_struct->qpair, (struct spdk_nvme_cpl *)cpl);
         //exit(1);
     }
 }
@@ -45,28 +43,24 @@ static void zns_read_cb(void *arg, const struct spdk_nvme_cpl *cpl)
     
     int rc = spdk_nvme_cpl_is_error(cpl);
     if (rc) {
-        spdk_nvme_qpair_print_completion(io_buffer_desc->qpair, cpl);
+        spdk_nvme_qpair_print_completion(spdk_struct->qpair, (struct spdk_nvme_cpl *)cpl);
         //exit(1);
     }
 }
-
-struct zone_management_args {
-    uint64_t zslba;
-    bool select_all;
-};
 
 static void zns_reset_zone_cb(void *arg, const struct spdk_nvme_cpl *cpl)
 {   
     int rc = spdk_nvme_cpl_is_error(cpl);
     if (rc) {
-        spdk_nvme_qpair_print_completion(io_buffer_desc->qpair, cpl);
+        spdk_nvme_qpair_print_completion(spdk_struct->qpair, (struct spdk_nvme_cpl *)cpl);
         pthread_mutex_unlock(&io_buffer_desc->io_buffer_mutex);
         //exit(1);
     }
 
-    struct zone_management_args *args = (struct zone_management_args *)arg;
+    zone_management_args_t *args = (zone_management_args_t *)arg;
     io_map_reset_zone(args->zslba, args->select_all);
     io_buffer_reset_zone(args->zslba / nr_blocks_in_zone, args->select_all);
+    args->is_complete = true;
     pthread_mutex_unlock(&io_buffer_desc->io_buffer_mutex);
     free(args);
 }
@@ -75,13 +69,14 @@ static void zns_open_zone_cb(void *arg, const struct spdk_nvme_cpl *cpl)
 {
     int rc = spdk_nvme_cpl_is_error(cpl);
     if (rc) {
-        spdk_nvme_qpair_print_completion(io_buffer_desc->qpair, cpl);
+        spdk_nvme_qpair_print_completion(spdk_struct->qpair, (struct spdk_nvme_cpl *)cpl);
         pthread_mutex_unlock(&io_buffer_desc->io_buffer_mutex);
         //exit(1);
     }
 
-    struct zone_management_args *args = (struct zone_management_args *)arg;
-    io_map_desc->zone_state[args->zslba / nr_blocks_in_zone] = ZNS_ZONE_STATE_EXP_OPEN;
+    zone_management_args_t *args = (zone_management_args_t *)arg;
+    io_map_desc->zone_state[args->zslba / nr_blocks_in_zone] = ZONE_STATE_EXP_OPEN;
+    args->is_complete = true;
     pthread_mutex_unlock(&io_buffer_desc->io_buffer_mutex);
     free(args);
 }
@@ -90,13 +85,14 @@ static void zns_close_zone_cb(void *arg, const struct spdk_nvme_cpl *cpl)
 {
     int rc = spdk_nvme_cpl_is_error(cpl);
     if (rc) {
-        spdk_nvme_qpair_print_completion(io_buffer_desc->qpair, cpl);
+        spdk_nvme_qpair_print_completion(spdk_struct->qpair, (struct spdk_nvme_cpl *)cpl);
         pthread_mutex_unlock(&io_buffer_desc->io_buffer_mutex);
         //exit(1);
     }
 
-    struct zone_management_args *args = (struct zone_management_args *)arg;
-    io_map_desc->zone_state[args->zslba / nr_blocks_in_zone] = ZNS_ZONE_STATE_CLOSED;
+    zone_management_args_t *args = (zone_management_args_t *)arg;
+    io_map_desc->zone_state[args->zslba / nr_blocks_in_zone] = ZONE_STATE_CLOSED;
+    args->is_complete = true;
     pthread_mutex_unlock(&io_buffer_desc->io_buffer_mutex);
     free(args);
 }
@@ -105,15 +101,16 @@ static void zns_finish_zone_cb(void *arg, const struct spdk_nvme_cpl *cpl)
 {
     int rc = spdk_nvme_cpl_is_error(cpl);
     if (rc) {
-        spdk_nvme_qpair_print_completion(io_buffer_desc->qpair, cpl);
+        spdk_nvme_qpair_print_completion(spdk_struct->qpair, (struct spdk_nvme_cpl *)cpl);
         pthread_mutex_unlock(&io_buffer_desc->io_buffer_mutex);
         //exit(1);
     }
 
-    struct zone_management_args *args = (struct zone_management_args *)arg;
+    zone_management_args_t *args = (zone_management_args_t *)arg;
     uint64_t z_id = args->zslba / nr_blocks_in_zone;
-    io_map_desc->zone_state[z_id] = ZNS_ZONE_STATE_FULL;
-    io_map_desc->write_ptr[z_id] = args->zslba + nr_blocks_in_zone;
+    io_map_desc->zone_state[z_id] = ZONE_STATE_FULL;
+    io_map_desc->zns_write_ptr[z_id] = args->zslba + nr_blocks_in_zone;
+    args->is_complete = true;
     pthread_mutex_unlock(&io_buffer_desc->io_buffer_mutex);
     free(args);
 }
@@ -122,13 +119,14 @@ static void zns_offline_zone_cb(void *arg, const struct spdk_nvme_cpl *cpl)
 {
     int rc = spdk_nvme_cpl_is_error(cpl);
     if (rc) {
-        spdk_nvme_qpair_print_completion(io_buffer_desc->qpair, cpl);
+        spdk_nvme_qpair_print_completion(spdk_struct->qpair, (struct spdk_nvme_cpl *)cpl);
         pthread_mutex_unlock(&io_buffer_desc->io_buffer_mutex);
         //exit(1);
     }
 
-    struct zone_management_args *args = (struct zone_management_args *)arg;
-    io_map_desc->zone_state[args->zslba / nr_blocks_in_zone] = ZNS_ZONE_STATE_OFFLINE;
+    zone_management_args_t *args = (zone_management_args_t *)arg;
+    io_map_desc->zone_state[args->zslba / nr_blocks_in_zone] = ZONE_STATE_OFFLINE;
+    args->is_complete = true;
     pthread_mutex_unlock(&io_buffer_desc->io_buffer_mutex);
     free(args);
 }
@@ -153,122 +151,121 @@ static void io_buffer_q_upsert(q_entry_t *q_entry)
     pthread_mutex_unlock(&io_buffer_desc->io_buffer_mutex);
 }
 
-static void io_buffer_release()
+static void io_buffer_release(void)
 {
     int rc = io_buffer_free();
     if (rc)
         fprintf(stderr, "Failed to release I/O buffer!\n");
 }
 
-static void io_map_release()
+static void io_map_release(void)
 {
     int rc = io_map_free();
     if (rc)
         fprintf(stderr, "Failed to release I/O map!\n");
 }
 
-int zns_env_init(struct spdk_env_opts *opts, struct spdk_nvme_transport_id *trid, uint32_t nsid)
+int zns_env_init(struct spdk_env_opts *opts, char *opts_name, struct spdk_nvme_transport_id *trid, uint32_t nsid)
 {
+    spdk_struct = (spdk_struct_t *)calloc(1, sizeof(spdk_struct_t));
+    
     spdk_env_opts_init(opts);
-    opts->name = "zns_io";
-    zns_env_opts = opts;
+    opts->name = opts_name;
+    spdk_struct->opts = opts;
 
     spdk_nvme_trid_populate_transport(trid, SPDK_NVME_TRANSPORT_PCIE);
     snprintf(trid->subnqn, sizeof(trid->subnqn), "%s", SPDK_NVMF_DISCOVERY_NQN);
-    zns_trid = trid;
+    spdk_struct->trid = trid;
 
     int rc = spdk_env_init(opts);
     if (rc < 0) {
-        zns_env_fini(NULL);
+        zns_env_fini();
         return rc;
     }
 
-    struct spdk_nvme_ctrlr *ctrlr;
-    rc = spdk_nvme_probe(trid, &ctrlr, probe_cb, attach_cb, NULL);
+    rc = spdk_nvme_probe(trid, &spdk_struct->ctrlr, probe_cb, attach_cb, NULL);
     if (rc) {
         fprintf(stderr, "spdk_nvme_probe() failed!\n");
-        zns_env_fini(NULL);
+        zns_env_fini();
         return rc;
     }
 
-    if (!ctrlr) {
+    if (!spdk_struct->ctrlr) {
         fprintf(stderr, "No NVMe controllers found!\n");
-        zns_env_fini(NULL);
+        zns_env_fini();
         return 1;
+    }
+
+    spdk_struct->ns = spdk_nvme_ctrlr_get_ns(spdk_struct->ctrlr, nsid);
+    if (!spdk_nvme_ns_is_active(spdk_struct->ns)) {
+        fprintf(stderr, "Namespace %d is inactive!\n", nsid);
+        zns_env_fini();
+        return rc;
+    }
+
+    spdk_struct->qpair = spdk_nvme_ctrlr_alloc_io_qpair(spdk_struct->ctrlr, NULL, 0);
+    if (!spdk_struct->qpair) {
+        fprintf(stderr, "NVMe I/O qpair allocation failed!\n");
+        zns_env_fini();
+        return rc;
     }
 
     io_buffer_desc = io_buffer_new();
     if (!io_buffer_desc) {
         fprintf(stderr, "Allocate io_buffer_desc failed!\n");
-        zns_env_fini(ctrlr);
+        zns_env_fini();
         return rc;
     }
-    io_buffer_desc->ctrlr = ctrlr;
-    io_buffer_desc->ns = spdk_nvme_ctrlr_get_ns(ctrlr, nsid);
     
-    if (!spdk_nvme_ns_is_active(io_buffer_desc->ns)) {
-        fprintf(stderr, "Namespace %d is inactive!\n", nsid);
-        zns_env_fini(ctrlr);
-        return rc;
-    }
+    pthread_mutex_init(&io_buffer_desc->io_buffer_mutex, 0);
 
-    io_buffer_desc->qpair = spdk_nvme_ctrlr_alloc_io_qpair(ctrlr, NULL, 0);
-    if (!io_buffer_desc->qpair) {
-        fprintf(stderr, "NVMe I/O qpair allocation failed!\n");
-        return rc;
-    }
+    io_buffer_desc->q_max_nums = spdk_nvme_zns_ns_get_max_open_zones(spdk_struct->ns);
 
-    pthread_mutex_init(&io_buffer_desc_t->io_buffer_mutex, NULL);
-
-    io_buffer_desc->q_max_nums = spdk_nvme_zns_ns_get_max_active_zones(io_buffer_desc->ns);
-
-    block_size = spdk_nvme_ns_get_sector_size(io_buffer_desc->ns);
-    nr_zones = spdk_nvme_zns_ns_get_num_zones(io_buffer_desc->ns);
-    nr_blocks_in_zone = spdk_nvme_zns_ns_get_zone_size_sectors(io_buffer_desc->ns);
-    nr_blocks_in_ns = spdk_nvme_ns_get_num_sectors(io_buffer_desc->ns);
-    zasl = spdk_nvme_zns_ctrlr_get_max_zone_append_size(io_buffer_desc->ctrlr);
+    block_size = spdk_nvme_ns_get_sector_size(spdk_struct->ns);
+    nr_zones = spdk_nvme_zns_ns_get_num_zones(spdk_struct->ns);
+    nr_blocks_in_zone = spdk_nvme_zns_ns_get_zone_size_sectors(spdk_struct->ns);
+    nr_blocks_in_ns = spdk_nvme_ns_get_num_sectors(spdk_struct->ns);
+    zasl = spdk_nvme_zns_ctrlr_get_max_zone_append_size(spdk_struct->ctrlr);
 
     pow2_block_size = 0;
-    for (int i = 1; i != block_size; i <<= 1)
+    for (size_t i = 1; i != block_size; i <<= 1)
         pow2_block_size++;
 
     io_map_desc = io_map_new();
     if (!io_map_desc) {
         fprintf(stderr, "Allocate io_map_desc failed!\n");
-        zns_env_fini(ctrlr);
+        zns_env_fini();
         return rc;
     }
-    rc = io_map_init(nr_blocks_in_ns, nr_block_in_zone, nr_zones);
+    
+    rc = io_map_init(nr_blocks_in_ns, nr_blocks_in_zone, nr_zones);
     if (rc) {
         fprintf(stderr, "io_map_init() failed!\n");
-        zns_env_fini(ctrlr);
+        zns_env_fini();
         return rc;
     }
 
     return rc;
 }
 
-void zns_env_fini(struct spdk_nvme_ctrlr *ctrlr)
+void zns_env_fini(void)
 {
-    release_io_buffer();
-    release_io_map();
-    pthread_mutex_destroy(&io_buffer_desc_t->io_buffer_mutex);
+    io_buffer_release();
+    io_map_release();
 
-    if (ctrlr) {
+    if (spdk_struct->ctrlr) {
         struct spdk_nvme_detach_ctx *detach_ctx = NULL;
-        spdk_nvme_detach_async(ctrlr, &detach_ctx);
+        spdk_nvme_detach_async(spdk_struct->ctrlr, &detach_ctx);
         if (detach_ctx)
             spdk_nvme_detach_poll(detach_ctx);
     }
-
-    zns_env_opts = NULL;
-    zns_trid = NULL;
 
     spdk_env_fini();
 }
 
 static int io_buffer_wb_zone(io_buffer_entry_t *io_buffer_entry)
 {
+    printf("write back to zone\n");
     if (!io_buffer_desc || !io_map_desc)
         return 1;
     
@@ -276,7 +273,7 @@ static int io_buffer_wb_zone(io_buffer_entry_t *io_buffer_entry)
         return 2;
     
     uint64_t zslba = io_buffer_entry->q_desc_p->q_id * nr_blocks_in_zone;
-    uint64_t z_id = zslba / nr_blocks_in_zone;
+    uint64_t z_id = io_buffer_entry->q_desc_p->q_id;
     uint64_t lba;
     uint64_t lba_count;
     int rc;
@@ -285,20 +282,21 @@ static int io_buffer_wb_zone(io_buffer_entry_t *io_buffer_entry)
     io_buffer_q_desc_t *q_desc = io_buffer_entry->q_desc_p;
     for (uint64_t i = 0; i < nr_blocks_in_zone; i += lba_count) {
         lba = zslba + i;
-        if (io_map_desc->io_map[lba].identifier == 3) {
+        if (io_map_desc->io_map[lba].identifier == 1) {
             q_entry = io_map_desc->io_map[lba].q_entry;
             lba_count = q_entry->size;
             io_buffer_q_remove(q_entry);
             is_complete = false;
-            rc = spdk_nvme_zns_zone_append(io_buffer_desc->ns, io_buffer_desc->qpair, q_entry->payload, zslba, lba_count, zns_write_cb, &is_complete, 0);
+            char *test_s = q_entry->payload;
+            rc = spdk_nvme_zns_zone_append(spdk_struct->ns, spdk_struct->qpair, q_entry->payload, zslba, lba_count, zns_write_cb, &is_complete, 0);
             if (rc) {
                 //  TODO: handle error
             }
-            for (; !is_complete;);
+            for (; !is_complete; spdk_nvme_qpair_process_completions(spdk_struct->qpair, 0));
             spdk_free(io_buffer_q_release_entry(q_entry));
             for (uint64_t j = 0; j < lba_count; j++)
-                io_map_desc->io_map[lba + j].lba = io_map_desc->write_ptr[z_id] + j;
-            io_map_desc->write_ptr[z_id] += lba_count;
+                io_map_desc->io_map[lba + j].lba = io_map_desc->zns_write_ptr[z_id] + j;
+            io_map_desc->zns_write_ptr[z_id] += lba_count;
             io_map_desc->io_map[lba].q_entry = NULL;
             io_map_desc->io_map[lba].identifier = 2;
         } else {
@@ -315,29 +313,31 @@ static int io_buffer_wb_zone(io_buffer_entry_t *io_buffer_entry)
     return 0;
 }
 
-int zns_io_reset_zone(uint64_t zslba, bool select_all)
+int zns_reset_zone(uint64_t zslba, bool select_all)
 {
     if (zslba >= nr_blocks_in_ns) {
         fprintf(stderr, "LBA %lx is out of the range of the namespace!\n", zslba);
         return 2;
     }
 
-    struct zone_management_args *args = (struct zone_management_args *)malloc(sizeof(struct zone_management_args));
-    args.zslba = zslba;
-    args.select_all = select_all;
+    zone_management_args_t *args = (zone_management_args_t *)malloc(sizeof(zone_management_args_t));
+    args->zslba = zslba;
+    args->select_all = select_all;
+    args->is_complete = false;
 
     pthread_mutex_lock(&io_buffer_desc->io_buffer_mutex);
-    int rc = spdk_nvme_zns_reset_zone(io_buffer_desc->ns, io_buffer_desc->qpair, zslba, select_all, zns_reset_zone_cb, args);
+    int rc = spdk_nvme_zns_reset_zone(spdk_struct->ns, spdk_struct->qpair, zslba, select_all, zns_reset_zone_cb, args);
     if (rc) {
         fprintf(stderr, "Reset zone failed!\n");
         free(args);
         return rc;
     }
+    for (; !args->is_complete; spdk_nvme_qpair_process_completions(spdk_struct->qpair, 0));
     
     return 0;
 }
 
-int zns_io_open_zone(uint64_t zslba, bool select_all)
+int zns_open_zone(uint64_t zslba, bool select_all)
 {
     if (zslba >= nr_blocks_in_ns) {
         fprintf(stderr, "LBA %lx is out of the range of the namespace!\n", zslba);
@@ -362,24 +362,26 @@ int zns_io_open_zone(uint64_t zslba, bool select_all)
             //  TODO: handle error
         }
 
-        rc = zns_io_close_zone(wb_zslba, false);
+        rc = zns_close_zone(wb_zslba, false);
         if (rc) {
             //  TODO: handle error
         }
 
     }
 
-    struct zone_management_args *args = (struct zone_management_args *)malloc(sizeof(struct zone_management_args));
-    args.zslba = zslba;
-    args.select_all = select_all;
+    zone_management_args_t *args = (zone_management_args_t *)malloc(sizeof(zone_management_args_t));
+    args->zslba = zslba;
+    args->select_all = select_all;
+    args->is_complete = false;
 
     pthread_mutex_lock(&io_buffer_desc->io_buffer_mutex);
-    rc = spdk_nvme_zns_open_zone(io_buffer_desc->ns, io_buffer_desc->qpair, zslba, select_all, zns_open_zone_cb, args);
+    rc = spdk_nvme_zns_open_zone(spdk_struct->ns, spdk_struct->qpair, zslba, select_all, zns_open_zone_cb, args);
     if (rc) {
         fprintf(stderr, "Open zone failed!\n");
         free(args);
         return rc;
     }
+    for (; !args->is_complete; spdk_nvme_qpair_process_completions(spdk_struct->qpair, 0));
     
     return 0;
 }
@@ -388,7 +390,7 @@ int zns_io_open_zone(uint64_t zslba, bool select_all)
  *      select_all are not support yet in the following three functions
  */
 
-int zns_io_close_zone(uint64_t zslba, bool select_all)
+int zns_close_zone(uint64_t zslba, bool select_all)
 {
     if (zslba >= nr_blocks_in_ns) {
         fprintf(stderr, "LBA %lx is out of the range of the namespace!\n", zslba);
@@ -408,58 +410,64 @@ int zns_io_close_zone(uint64_t zslba, bool select_all)
         }
     }
 
-    struct zone_management_args *args = (struct zone_management_args *)malloc(sizeof(struct zone_management_args));
-    args.zslba = zslba;
-    args.select_all = select_all;
+    zone_management_args_t *args = (zone_management_args_t *)malloc(sizeof(zone_management_args_t));
+    args->zslba = zslba;
+    args->select_all = select_all;
+    args->is_complete = false;
 
     pthread_mutex_lock(&io_buffer_desc->io_buffer_mutex);
-    rc = spdk_nvme_zns_close_zone(io_buffer_desc->ns, io_buffer_desc->qpair, zslba, select_all, zns_close_zone_cb, args);
+    rc = spdk_nvme_zns_close_zone(spdk_struct->ns, spdk_struct->qpair, zslba, select_all, zns_close_zone_cb, args);
     if (rc) {
         fprintf(stderr, "Close zone failed!\n");
         return rc;
     }
+    for (; !args->is_complete; spdk_nvme_qpair_process_completions(spdk_struct->qpair, 0));
     
     return 0;
 }
 
-int zns_io_finish_zone(uint64_t zslba, bool select_all)
+int zns_finish_zone(uint64_t zslba, bool select_all)
 {
     if (zslba >= nr_blocks_in_ns) {
         fprintf(stderr, "LBA %lx is out of the range of the namespace!\n", zslba);
         return 2;
     }
 
-    struct zone_management_args *args = (struct zone_management_args *)malloc(sizeof(struct zone_management_args));
-    args.zslba = zslba;
-    args.select_all = select_all;
+    zone_management_args_t *args = (zone_management_args_t *)malloc(sizeof(zone_management_args_t));
+    args->zslba = zslba;
+    args->select_all = select_all;
+    args->is_complete = false;
 
     pthread_mutex_lock(&io_buffer_desc->io_buffer_mutex);
-    int rc = spdk_nvme_zns_finish_zone(io_buffer_desc->ns, io_buffer_desc->qpair, zslba, select_all, zns_finish_zone_cb, args);
+    int rc = spdk_nvme_zns_finish_zone(spdk_struct->ns, spdk_struct->qpair, zslba, select_all, zns_finish_zone_cb, args);
     if (rc) {
         fprintf(stderr, "Finish zone failed!\n");
         return rc;
     }
+    for (; !args->is_complete; spdk_nvme_qpair_process_completions(spdk_struct->qpair, 0));
     
     return 0;
 }
 
-int zns_io_offline_zone(uint64_t zslba, bool select_all)
+int zns_offline_zone(uint64_t zslba, bool select_all)
 {
     if (zslba >= nr_blocks_in_ns) {
         fprintf(stderr, "LBA %lx is out of the range of the namespace!\n", zslba);
         return 2;
     }
 
-    struct zone_management_args *args = (struct zone_management_args *)malloc(sizeof(struct zone_management_args));
-    args.zslba = zslba;
-    args.select_all = select_all;
+    zone_management_args_t *args = (zone_management_args_t *)malloc(sizeof(zone_management_args_t));
+    args->zslba = zslba;
+    args->select_all = select_all;
+    args->is_complete = false;
     
     pthread_mutex_lock(&io_buffer_desc->io_buffer_mutex);
-    int rc = spdk_nvme_zns_offline_zone(io_buffer_desc->ns, io_buffer_desc->qpair, zslba, select_all, zns_offline_zone_cb, args);
+    int rc = spdk_nvme_zns_offline_zone(spdk_struct->ns, spdk_struct->qpair, zslba, select_all, zns_offline_zone_cb, args);
     if (rc) {
         fprintf(stderr, "Offline zone failed!\n");
         return rc;
     }
+    for (; !args->is_complete; spdk_nvme_qpair_process_completions(spdk_struct->qpair, 0));
 
     return 0;
 }
@@ -489,13 +497,15 @@ int zns_io_append(void *payload, uint64_t zslba, uint32_t lba_count)
     }
 
     uint64_t z_id = zslba / nr_blocks_in_zone;
+    uint64_t wp = io_map_desc->buffer_write_ptr[z_id];
     size_t data_size = lba_count << pow2_block_size;
     io_buffer_entry_t *io_buffer_entry = NULL;
+    q_entry_t *q_entry = NULL;
     void *buf = NULL;
     int rc;
     switch (io_map_desc->zone_state[z_id]) {
-        case ZNS_ZONE_STATE_EMPTY:
-            io_map_desc->zone_state[z_id] = ZNS_ZONE_STATE_IMP_OPEN;
+        case ZONE_STATE_EMPTY:
+            io_map_desc->zone_state[z_id] = ZONE_STATE_IMP_OPEN;
             rc = io_buffer_q_init(&io_buffer_entry, z_id, nr_blocks_in_zone);
             if (rc) {
                 //  TODO: handle error
@@ -503,7 +513,7 @@ int zns_io_append(void *payload, uint64_t zslba, uint32_t lba_count)
             
             io_buffer_entry_t *io_buffer_wb_entry;
             pthread_mutex_lock(&io_buffer_desc->io_buffer_mutex);
-            for (; io_buffer_desc->q_nums >= io_buffer_desc->max_q_nums; ) {
+            for (; io_buffer_desc->q_nums >= io_buffer_desc->q_max_nums; ) {
                 rc = io_buffer_dequeue(&io_buffer_wb_entry);
                 if (rc) {
                     //  TODO: handle error
@@ -517,7 +527,7 @@ int zns_io_append(void *payload, uint64_t zslba, uint32_t lba_count)
                 }
             }
 
-            rc = io_buffer_desc->io_buffer_enqueue(io_buffer_entry);
+            rc = io_buffer_enqueue(io_buffer_entry);
             if (rc) {
                 //  TODO: handle error
             }
@@ -525,24 +535,30 @@ int zns_io_append(void *payload, uint64_t zslba, uint32_t lba_count)
             buf = spdk_zmalloc(data_size, block_size, NULL, SPDK_ENV_SOCKET_ID_ANY, SPDK_MALLOC_DMA);
             memcpy(buf, payload, data_size);
             
-            rc = io_buffer_q_enqueue(io_buffer_entry->q_desc_p, buf, lba_count);
+            rc = io_buffer_q_enqueue(io_buffer_entry->q_desc_p, &q_entry, buf, lba_count);
             if (rc) {
                 // TODO: handle error
             }
+            
+            io_map_desc->io_map[wp].identifier = 0x1;
+            io_map_desc->io_map[wp].q_entry = q_entry;
+            io_map_desc->buffer_write_ptr[z_id] += lba_count;
 
             pthread_mutex_unlock(&io_buffer_desc->io_buffer_mutex);
 
             break;
 
-        case ZNS_ZONE_STATE_IMP_OPEN:
-        case ZNS_ZONE_STATE_EXP_OPEN:
+        case ZONE_STATE_IMP_OPEN:
+        case ZONE_STATE_EXP_OPEN:
             rc = io_buffer_q_find(&io_buffer_entry, z_id);
             if (!rc) {
-                //  TODO: handle error
+                fprintf(stderr, "Zone %ld was not found in the io buffer!\n", z_id);
+                return 5;
             }
             
-            if (io_buffer_entry->q_desc_p->q_buffer + lba_count >= zslba + nr_blocks_in_zone) {
-                fprintf(stderr, "Zone %d doesn't have enough capacity!\n", z_id);
+            if (io_buffer_entry->q_desc_p->q_size + lba_count > io_buffer_entry->q_desc_p->q_size_max) {
+                fprintf(stderr, "Zone %ld doesn't have enough capacity!\n", z_id);
+                fprintf(stderr, "q_size is %ld, q_size_max is %ld\n", io_buffer_entry->q_desc_p->q_size, io_buffer_entry->q_desc_p->q_size_max);
                 return 4;
             }
 
@@ -551,10 +567,14 @@ int zns_io_append(void *payload, uint64_t zslba, uint32_t lba_count)
             buf = spdk_zmalloc(data_size, block_size, NULL, SPDK_ENV_SOCKET_ID_ANY, SPDK_MALLOC_DMA);
             memcpy(buf, payload, data_size);
             
-            rc = io_buffer_q_enqueue(io_buffer_entry->q_desc_p, buf, lba_count);
+            rc = io_buffer_q_enqueue(io_buffer_entry->q_desc_p, &q_entry, buf, lba_count);
             if (rc) {
                 // TODO: handle error
             }
+
+            io_map_desc->io_map[wp].identifier = 0x1;
+            io_map_desc->io_map[wp].q_entry = q_entry;
+            io_map_desc->buffer_write_ptr[z_id] += lba_count;
 
             pthread_mutex_unlock(&io_buffer_desc->io_buffer_mutex);
 
@@ -562,12 +582,12 @@ int zns_io_append(void *payload, uint64_t zslba, uint32_t lba_count)
 
             break;
 
-        case ZNS_ZONE_STATE_CLOSED:
-            io_map_desc->zone_state[z_id] = ZNS_ZONE_STATE_IMP_OPEN;
+        case ZONE_STATE_CLOSED:
+            io_map_desc->zone_state[z_id] = ZONE_STATE_IMP_OPEN;
             rc = io_buffer_q_find(&io_buffer_entry, z_id);
             if (rc) {
-                if (io_buffer_entry->q_desc_p->q_buffer + lba_count >= io_buffer_entry->q_desc_p->q_buffer_max) {
-                    fprintf(stderr, "Zone %d doesn't have enough capacity!\n", z_id);
+                if (io_buffer_entry->q_desc_p->q_size + lba_count >= io_buffer_entry->q_desc_p->q_size_max) {
+                    fprintf(stderr, "Zone %ld doesn't have enough capacity!\n", z_id);
                     return 4;
                 }
 
@@ -576,33 +596,55 @@ int zns_io_append(void *payload, uint64_t zslba, uint32_t lba_count)
                 buf = spdk_zmalloc(data_size, block_size, NULL, SPDK_ENV_SOCKET_ID_ANY, SPDK_MALLOC_DMA);
                 memcpy(buf, payload, data_size);
                 
-                rc = io_buffer_q_enqueue(io_buffer_entry->q_desc_p, buf, lba_count);
+                rc = io_buffer_q_enqueue(io_buffer_entry->q_desc_p, &q_entry, buf, lba_count);
                 if (rc) {
                     // TODO: handle error
                 }
+
+                io_map_desc->io_map[wp].identifier = 0x1;
+                io_map_desc->io_map[wp].q_entry = q_entry;
+                io_map_desc->buffer_write_ptr[z_id] += lba_count;
 
                 pthread_mutex_unlock(&io_buffer_desc->io_buffer_mutex);
 
                 io_buffer_upsert(io_buffer_entry);
 
             } else {
-                uint64_t available_entry = nr_blocks_in_zone - (io_map_desc->write_ptr[z_id] - zslba);
+                uint64_t available_entry = nr_blocks_in_zone - (io_map_desc->zns_write_ptr[z_id] - zslba);
                 rc = io_buffer_q_init(&io_buffer_entry, z_id, available_entry);
                 if (rc) {
                     //  TODO: handle error
                 }
 
+                io_buffer_entry_t *io_buffer_wb_entry;
+                pthread_mutex_lock(&io_buffer_desc->io_buffer_mutex);
+                for (; io_buffer_desc->q_nums >= io_buffer_desc->q_max_nums; ) {
+                    rc = io_buffer_dequeue(&io_buffer_wb_entry);
+                    if (rc) {
+                        //  TODO: handle error
+                        break;
+                    }
+
+                    rc = io_buffer_wb_zone(io_buffer_wb_entry);
+                    if (rc) {
+                        //  TODO: handle error
+                        break;
+                    }
+                }
+
                 buf = spdk_zmalloc(data_size, block_size, NULL, SPDK_ENV_SOCKET_ID_ANY, SPDK_MALLOC_DMA);
                 memcpy(buf, payload, data_size);
                 
-                rc = io_buffer_q_enqueue(io_buffer_entry->q_desc_p, buf, lba_count);
+                rc = io_buffer_q_enqueue(io_buffer_entry->q_desc_p, &q_entry, buf, lba_count);
                 if (rc) {
                     //  TODO: handle error
                 }
 
-                pthread_mutex_lock(&io_buffer_desc->io_buffer_mutex);
+                io_map_desc->io_map[wp].identifier = 0x1;
+                io_map_desc->io_map[wp].q_entry = q_entry;
+                io_map_desc->buffer_write_ptr[z_id] += lba_count;
 
-                rc = io_buffer_desc->io_buffer_enqueue(io_buffer_entry);
+                rc = io_buffer_enqueue(io_buffer_entry);
                 if (rc) {
                     //  TODO: handle error
                 }
@@ -612,17 +654,17 @@ int zns_io_append(void *payload, uint64_t zslba, uint32_t lba_count)
 
             break;
 
-        case ZNS_ZONE_STATE_FULL:
-            fprintf(stderr, "Zone %d is full!\n", z_id);
+        case ZONE_STATE_FULL:
+            fprintf(stderr, "Zone %ld is full!\n", z_id);
             return 4;
-        case ZNS_ZONE_STATE_READONLY:
-            fprintf(stderr, "Zone %d is read only!\n", z_id);
+        case ZONE_STATE_READONLY:
+            fprintf(stderr, "Zone %ld is read only!\n", z_id);
             return 5;
-        case ZNS_ZONE_STATE_OFFLINE:
-            fprintf(stderr, "Zone %d is offline!\n", z_id);
+        case ZONE_STATE_OFFLINE:
+            fprintf(stderr, "Zone %ld is offline!\n", z_id);
             return 6;
         default:
-            fprintf(stderr, "Zone %d is in an unknown state!\n", z_id);
+            fprintf(stderr, "Zone %ld is in an unknown state!\n", z_id);
             return 7;
     }
 
@@ -646,6 +688,7 @@ int zns_io_read(void *payload, uint64_t lba, uint32_t lba_count)
 
     int rc;
     void *buf;
+    q_entry_t *q_entry;
     switch (io_map_desc->io_map[lba].identifier)
     {
     case 0x0:
@@ -654,7 +697,7 @@ int zns_io_read(void *payload, uint64_t lba, uint32_t lba_count)
         return 2;
     case 0x1:
         /* The data is in io_buffer */
-        q_entry_t *q_entry = io_map_desc->io_map[lba].q_entry;
+        q_entry = io_map_desc->io_map[lba].q_entry;
         buf = q_entry->payload;
         memcpy(payload, buf, data_size);
         io_buffer_q_upsert(q_entry);
@@ -670,18 +713,25 @@ int zns_io_read(void *payload, uint64_t lba, uint32_t lba_count)
             return 4;
         }
         bool is_complete = false;
-        rc = spdk_nvme_ns_cmd_read(io_buffer_desc->ns, io_buffer_desc->qpair, buf, io_map_desc->io_map[lba].data_p.lba, lba_count, zns_read_cb, &is_complete, 0);
-        for (; !is_complete;);
+        rc = spdk_nvme_ns_cmd_read(spdk_struct->ns, spdk_struct->qpair, buf, io_map_desc->io_map[lba].lba, lba_count, zns_read_cb, &is_complete, 0);
+        if (rc) {
+            //  TODO: handle error
+        }
+        for (; !is_complete; spdk_nvme_qpair_process_completions(spdk_struct->qpair, 0));
+
         memcpy(payload, buf, data_size);
         spdk_free(buf);
+
         break;
     case 0x3:
         /* The data is in ZNS and io_buffer */
-        q_entry_t *q_entry = io_map_desc->io_map[lba].q_entry;
+        q_entry = io_map_desc->io_map[lba].q_entry;
         buf = q_entry->payload;
         memcpy(payload, buf, data_size);
         io_buffer_q_upsert(q_entry);
         io_buffer_upsert(q_entry->q_desc_p->io_buffer_entry_p);
+        break;
+    case 0x11:
     default:
         fprintf(stderr, "Unknown identifier!\n");
         return 3;
