@@ -38,7 +38,7 @@ int io_buffer_q_dequeue(io_buffer_q_desc_t *q_desc, q_entry_t **q_entry)
 {
     if (!q_desc)
         return 1;
-    if (!CIRCLEQ_EMPTY(&q_desc->q_head))
+    if (CIRCLEQ_EMPTY(&q_desc->q_head))
         return 2;
     
     *q_entry = CIRCLEQ_LAST(&q_desc->q_head);

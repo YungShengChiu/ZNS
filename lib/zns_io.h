@@ -28,6 +28,6 @@ int zns_offline_zone(uint64_t zslba, bool select_all);
 
 int zns_io_append(void *payload, uint64_t zslba, uint32_t lba_count);
 
-int zns_io_read(void *payload, uint64_t lba, uint32_t lba_count);
+int zns_io_read(void **payload, uint64_t lba, uint32_t lba_count);
 
 #endif

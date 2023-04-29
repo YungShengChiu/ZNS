@@ -75,7 +75,24 @@ static void zns_open_zone_cb(void *arg, const struct spdk_nvme_cpl *cpl)
     }
 
     zone_management_args_t *args = (zone_management_args_t *)arg;
-    io_map_desc->zone_state[args->zslba / nr_blocks_in_zone] = ZONE_STATE_EXP_OPEN;
+    io_buffer_entry_t *io_buffer_entry = NULL;
+    uint64_t z_id = args->zslba / nr_blocks_in_zone;
+    
+    rc = io_buffer_q_find(&io_buffer_entry, z_id);
+    if (!rc) {
+        uint64_t available_blocks = nr_blocks_in_zone - (io_map_desc->zns_write_ptr[z_id] - args->zslba);
+        rc = io_buffer_q_init(&io_buffer_entry, z_id, available_blocks);
+        if (rc) {
+            //  TODO: Handle error
+        }
+
+        rc = io_buffer_enqueue(io_buffer_entry);
+        if (rc) {
+            //  TODO: Handle error
+        }
+    }
+
+    io_map_desc->zone_state[z_id] = ZONE_STATE_EXP_OPEN;
     args->is_complete = true;
     pthread_mutex_unlock(&io_buffer_desc->io_buffer_mutex);
     free(args);
@@ -155,14 +172,14 @@ static void io_buffer_release(void)
 {
     int rc = io_buffer_free();
     if (rc)
-        fprintf(stderr, "Failed to release I/O buffer!\n");
+        fprintf(stderr, "Failed to release I/O buffer!\n rc = %d\n", rc);
 }
 
 static void io_map_release(void)
 {
     int rc = io_map_free();
     if (rc)
-        fprintf(stderr, "Failed to release I/O map!\n");
+        fprintf(stderr, "Failed to release I/O map!\n rc = %d\n", rc);
 }
 
 int zns_env_init(struct spdk_env_opts *opts, char *opts_name, struct spdk_nvme_transport_id *trid, uint32_t nsid)
@@ -287,7 +304,6 @@ static int io_buffer_wb_zone(io_buffer_entry_t *io_buffer_entry)
             lba_count = q_entry->size;
             io_buffer_q_remove(q_entry);
             is_complete = false;
-            char *test_s = q_entry->payload;
             rc = spdk_nvme_zns_zone_append(spdk_struct->ns, spdk_struct->qpair, q_entry->payload, zslba, lba_count, zns_write_cb, &is_complete, 0);
             if (rc) {
                 //  TODO: handle error
@@ -501,7 +517,6 @@ int zns_io_append(void *payload, uint64_t zslba, uint32_t lba_count)
     size_t data_size = lba_count << pow2_block_size;
     io_buffer_entry_t *io_buffer_entry = NULL;
     q_entry_t *q_entry = NULL;
-    void *buf = NULL;
     int rc;
     switch (io_map_desc->zone_state[z_id]) {
         case ZONE_STATE_EMPTY:
@@ -531,11 +546,8 @@ int zns_io_append(void *payload, uint64_t zslba, uint32_t lba_count)
             if (rc) {
                 //  TODO: handle error
             }
-
-            buf = spdk_zmalloc(data_size, block_size, NULL, SPDK_ENV_SOCKET_ID_ANY, SPDK_MALLOC_DMA);
-            memcpy(buf, payload, data_size);
-            
-            rc = io_buffer_q_enqueue(io_buffer_entry->q_desc_p, &q_entry, buf, lba_count);
+           
+            rc = io_buffer_q_enqueue(io_buffer_entry->q_desc_p, &q_entry, payload, lba_count);
             if (rc) {
                 // TODO: handle error
             }
@@ -564,10 +576,7 @@ int zns_io_append(void *payload, uint64_t zslba, uint32_t lba_count)
 
             pthread_mutex_lock(&io_buffer_desc->io_buffer_mutex);
             
-            buf = spdk_zmalloc(data_size, block_size, NULL, SPDK_ENV_SOCKET_ID_ANY, SPDK_MALLOC_DMA);
-            memcpy(buf, payload, data_size);
-            
-            rc = io_buffer_q_enqueue(io_buffer_entry->q_desc_p, &q_entry, buf, lba_count);
+            rc = io_buffer_q_enqueue(io_buffer_entry->q_desc_p, &q_entry, payload, lba_count);
             if (rc) {
                 // TODO: handle error
             }
@@ -593,10 +602,7 @@ int zns_io_append(void *payload, uint64_t zslba, uint32_t lba_count)
 
                 pthread_mutex_lock(&io_buffer_desc->io_buffer_mutex);
                 
-                buf = spdk_zmalloc(data_size, block_size, NULL, SPDK_ENV_SOCKET_ID_ANY, SPDK_MALLOC_DMA);
-                memcpy(buf, payload, data_size);
-                
-                rc = io_buffer_q_enqueue(io_buffer_entry->q_desc_p, &q_entry, buf, lba_count);
+                rc = io_buffer_q_enqueue(io_buffer_entry->q_desc_p, &q_entry, payload, lba_count);
                 if (rc) {
                     // TODO: handle error
                 }
@@ -610,8 +616,8 @@ int zns_io_append(void *payload, uint64_t zslba, uint32_t lba_count)
                 io_buffer_upsert(io_buffer_entry);
 
             } else {
-                uint64_t available_entry = nr_blocks_in_zone - (io_map_desc->zns_write_ptr[z_id] - zslba);
-                rc = io_buffer_q_init(&io_buffer_entry, z_id, available_entry);
+                uint64_t available_blocks = nr_blocks_in_zone - (io_map_desc->zns_write_ptr[z_id] - zslba);
+                rc = io_buffer_q_init(&io_buffer_entry, z_id, available_blocks);
                 if (rc) {
                     //  TODO: handle error
                 }
@@ -631,11 +637,8 @@ int zns_io_append(void *payload, uint64_t zslba, uint32_t lba_count)
                         break;
                     }
                 }
-
-                buf = spdk_zmalloc(data_size, block_size, NULL, SPDK_ENV_SOCKET_ID_ANY, SPDK_MALLOC_DMA);
-                memcpy(buf, payload, data_size);
                 
-                rc = io_buffer_q_enqueue(io_buffer_entry->q_desc_p, &q_entry, buf, lba_count);
+                rc = io_buffer_q_enqueue(io_buffer_entry->q_desc_p, &q_entry, payload, lba_count);
                 if (rc) {
                     //  TODO: handle error
                 }
@@ -672,7 +675,12 @@ int zns_io_append(void *payload, uint64_t zslba, uint32_t lba_count)
     return 0;
 }
 
-int zns_io_read(void *payload, uint64_t lba, uint32_t lba_count)
+
+/**
+ *      payload is a parameter that points to a pointer to the data buffer.
+ */
+
+int zns_io_read(void **payload, uint64_t lba, uint32_t lba_count)
 {
     if (lba >= nr_blocks_in_ns) {
         fprintf(stderr, "LBA %lx is out of the range of the namespace!\n", lba);
@@ -680,14 +688,12 @@ int zns_io_read(void *payload, uint64_t lba, uint32_t lba_count)
     }
 
     size_t data_size = lba_count << pow2_block_size;
-    payload = (void *)malloc(data_size);
-    if (!payload) {
-        fprintf(stderr, "Allocate payload failed!\n");
+    if (!*payload) {
+        fprintf(stderr, "The payload does not exist!\n");
         return 4;
     }
 
     int rc;
-    void *buf;
     q_entry_t *q_entry;
     switch (io_map_desc->io_map[lba].identifier)
     {
@@ -698,40 +704,33 @@ int zns_io_read(void *payload, uint64_t lba, uint32_t lba_count)
     case 0x1:
         /* The data is in io_buffer */
         q_entry = io_map_desc->io_map[lba].q_entry;
-        buf = q_entry->payload;
-        memcpy(payload, buf, data_size);
+        *payload = q_entry->payload;
         io_buffer_q_upsert(q_entry);
         io_buffer_upsert(q_entry->q_desc_p->io_buffer_entry_p);
         break;
     case 0x2:
         /* The data is in ZNS */
         /* The data won't be buffered */
-        buf = spdk_zmalloc(data_size, block_size, NULL, SPDK_ENV_SOCKET_ID_ANY, SPDK_MALLOC_DMA);
-        if (!buf) {
-            fprintf(stderr, "Allocate buffer failed!\n");
-            free(payload);
-            return 4;
-        }
         bool is_complete = false;
-        rc = spdk_nvme_ns_cmd_read(spdk_struct->ns, spdk_struct->qpair, buf, io_map_desc->io_map[lba].lba, lba_count, zns_read_cb, &is_complete, 0);
+        rc = spdk_nvme_ns_cmd_read(spdk_struct->ns, spdk_struct->qpair, *payload, io_map_desc->io_map[lba].lba, lba_count, zns_read_cb, &is_complete, 0);
         if (rc) {
             //  TODO: handle error
         }
         for (; !is_complete; spdk_nvme_qpair_process_completions(spdk_struct->qpair, 0));
 
-        memcpy(payload, buf, data_size);
-        spdk_free(buf);
-
         break;
     case 0x3:
         /* The data is in ZNS and io_buffer */
         q_entry = io_map_desc->io_map[lba].q_entry;
-        buf = q_entry->payload;
-        memcpy(payload, buf, data_size);
+        *payload = q_entry->payload;
         io_buffer_q_upsert(q_entry);
         io_buffer_upsert(q_entry->q_desc_p->io_buffer_entry_p);
         break;
     case 0x11:
+        
+        //  TODO
+
+        break;
     default:
         fprintf(stderr, "Unknown identifier!\n");
         return 3;
