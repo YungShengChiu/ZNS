@@ -1,13 +1,6 @@
-#include <spdk/stdinc.h>
 #include <spdk/nvme.h>
 #include <spdk/nvme_zns.h>
-#include "zns_io_buffer.h"
-#include "zns_io_map.h"
-
-/*
- *      zns_io maintains a map and multiple queues for buffering I/Os.
- *      The address to write in the ZNS will be kept in zns_io_map.
- **/
+#include <spdk/stdinc.h>
 
 #ifndef ZNS_IO_H
 #define ZNS_IO_H
