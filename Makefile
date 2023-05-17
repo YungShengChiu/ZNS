@@ -37,7 +37,7 @@ unbind_zns:
 	@echo "\nUnbind ZNS from native kernel driver\n"
 	@echo "Huge-page size: $(shell grep Hugepagesize /proc/meminfo | cut -d : -f 2 | tr -dc '0-9') KB"
 	@echo "Total huge-pages memory: 2048 MB"
-	@sudo $(SPDK_DIR)/scripts/setup.sh
+	@sudo $(SPDK_DIR)/scripts/setup.sh 
 
 rebind_zns:
 	@echo "\nRebind ZNS back to the kernel driver\n"

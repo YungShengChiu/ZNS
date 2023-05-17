@@ -150,11 +150,17 @@ int zns_env_init(struct spdk_env_opts *opts, char *opts_name, struct spdk_nvme_t
 
 void zns_env_fini(void)
 {
+    zns_io_buf_lock();
+    zns_wb_lock();
+    for (uint64_t z_id = 0; z_id < zns_info->nr_zones; z_id++)
+        zns_lock_zone(z_id);
+    
     io_buffer_free();
     io_map_free();
 
     if (zns_io_lock) {
         pthread_mutex_destroy(&zns_io_lock->wb_lock);
+        pthread_mutex_destroy(&zns_io_lock->io_buffer_lock);
 
         if (zns_io_lock->zone_lock)
             for (uint64_t z_id = 0; z_id < zns_info->nr_zones; z_id++)
@@ -219,7 +225,6 @@ static int _wb_zone(io_buffer_entry_t *io_buffer_entry)
     args->zslba = zslba;
     args->z_id = z_id;
     
-    zns_wb_lock();
     int rc;
     for (uint64_t offset = 0; offset < zns_info->nr_blocks_in_zone; offset += lba_count) {
         lba = zslba + offset;
@@ -235,7 +240,6 @@ static int _wb_zone(io_buffer_entry_t *io_buffer_entry)
                         q_entry->payload, zslba, lba_count, _zns_zone_io_cb, args, 0);
             if (rc) {
                 //  TODO: error handling
-                zns_wb_unlock();
                 free(args);
                 return rc;
             }
@@ -246,7 +250,6 @@ static int _wb_zone(io_buffer_entry_t *io_buffer_entry)
             lba_count = 1;
         }
     }
-    zns_wb_unlock();
 
     rc = q_free(io_buffer_entry->q_desc_p);
     if (rc == 130)
@@ -255,6 +258,28 @@ static int _wb_zone(io_buffer_entry_t *io_buffer_entry)
     free(args);
 
     return 0;
+}
+
+static void _wb_zone_start(void *arg)
+{
+    io_buffer_entry_t *io_buffer_entry = (io_buffer_entry_t *)arg;
+    int rc = _wb_zone(io_buffer_entry);
+    switch (rc)
+    {
+        case 150:
+        case 151:
+        case 0:
+            break;
+    
+        default:
+            zns_io_buf_lock();
+            io_buffer_insert_tail(io_buffer_entry);
+            zns_io_buf_unlock();
+            break;
+    }
+
+    zns_wb_unlock();
+    pthread_exit(NULL);
 }
 
 static void _zns_zone_manage_cb(void *arg, const struct spdk_nvme_cpl *cpl)
@@ -410,10 +435,10 @@ int zns_close_zone(uint64_t zslba, bool select_all)
             io_buffer_remove(io_buffer_entry);
             zns_io_buf_unlock();
             
-            int rc = _wb_zone(io_buffer_entry);
-            if (rc) {
-                //  TODO: error handling
-            }
+            zns_wb_lock();
+            pthread_t wb_tid;
+            for (; pthread_create(&wb_tid, NULL, _wb_zone_start, io_buffer_entry); 
+                fprintf(stderr, "pthread_create() failed!\n"));
             
             /**
              *      args should be release in the callback function
@@ -426,7 +451,7 @@ int zns_close_zone(uint64_t zslba, bool select_all)
             args->select_all = select_all;
             args->is_complete = false;
 
-            rc = spdk_nvme_zns_close_zone(zns_info->spdk_struct->ns, zns_info->spdk_struct->qpair, 
+            int rc = spdk_nvme_zns_close_zone(zns_info->spdk_struct->ns, zns_info->spdk_struct->qpair, 
                         zslba, select_all, _zns_zone_manage_cb, args);
             if (rc) {
                 zns_unlock_zone(z_id);
@@ -485,10 +510,10 @@ int zns_finish_zone(uint64_t zslba, bool select_all)
             io_buffer_remove(io_buffer_entry);
             zns_io_buf_unlock();
 
-            rc = _wb_zone(io_buffer_entry);
-            if (rc) {
-                //  TODO: error handling
-            }
+            zns_wb_lock();
+            pthread_t wb_tid;
+            for (; pthread_create(&wb_tid, NULL, _wb_zone_start, io_buffer_entry); 
+                fprintf(stderr, "pthread_create() failed!\n"));
 
             /**
              *      args should be release in the callback function

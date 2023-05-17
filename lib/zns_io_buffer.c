@@ -103,6 +103,15 @@ void io_buffer_insert_front(io_buffer_entry_t *io_buffer_entry)
     io_buffer_entry->io_buffer_desc_p->q_nums++;
 }
 
+void io_buffer_insert_tail(io_buffer_entry_t *io_buffer_entry)
+{
+    if (!io_buffer_entry)
+        return;
+    
+    CIRCLEQ_INSERT_TAIL(&io_buffer_desc->buffer_head, io_buffer_entry, io_buffer_entry_p);
+    io_buffer_entry->io_buffer_desc_p->q_nums++;
+}
+
 void io_buffer_remove(io_buffer_entry_t *io_buffer_entry)
 {
     if (!io_buffer_entry)

@@ -66,6 +66,8 @@ int io_buffer_free(void);
 
 void io_buffer_insert_front(io_buffer_entry_t *io_buffer_entry);
 
+void io_buffer_insert_tail(io_buffer_entry_t *io_buffer_entry);
+
 void io_buffer_remove(io_buffer_entry_t *io_buffer_entry);
 
 q_desc_t *q_new(io_buffer_entry_t *io_buffer_entry_p, uint64_t q_id, size_t size_max);
