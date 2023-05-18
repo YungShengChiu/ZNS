@@ -791,6 +791,43 @@ int zns_io_append(void *payload, uint64_t zslba, uint32_t lba_count)
     return 0;
 }
 
+int zns_io_update(uint64_t lba, zns_io_update_cb cb_fn, void *cb_arg)
+{
+    if (lba >= zns_info->nr_blocks_in_ns)
+        return 1100;
+    
+    uint64_t z_id = lba / zns_info->nr_blocks_in_zone;
+    zns_lock_zone(z_id);
+
+    q_entry_t *q_entry;
+    switch (io_map_get_identifier(lba))
+    {
+        default:
+            zns_unlock_zone(z_id);
+            return 1110;
+        
+        case 0x0:
+            /* The data is not in ZNS nor io_buffer */
+            zns_unlock_zone(z_id);
+            return 301;
+        
+        case 0x1:
+        case 0x3:
+            /* The data is in io_buffer */
+            q_entry = io_map_get_q_entry(lba);
+            cb_fn(cb_arg, q_entry->payload, q_entry->size);
+
+            io_buffer_q_upsert(q_entry);
+            io_buffer_upsert(q_entry->q_desc_p->io_buffer_entry_p);
+
+            break;
+    }
+
+    zns_unlock_zone(z_id);
+
+    return 0;
+}
+
 /**
  *      payload is a parameter that points to a pointer to the data buffer.
  */
@@ -825,6 +862,7 @@ int zns_io_read(void **payload, uint64_t lba, uint32_t lba_count)
             q_entry = io_map_get_q_entry(lba);
             *payload = spdk_malloc(data_size, zns_info->block_size, NULL, SPDK_ENV_SOCKET_ID_ANY, SPDK_MALLOC_DMA);
             memcpy(*payload, q_entry->payload, data_size);
+
             io_buffer_q_upsert(q_entry);
             io_buffer_upsert(q_entry->q_desc_p->io_buffer_entry_p);
             
