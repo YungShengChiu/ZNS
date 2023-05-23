@@ -13,6 +13,10 @@ int io_buffer_init(uint32_t q_max_nums)
     
     io_buffer_desc->q_max_nums = q_max_nums;
     CIRCLEQ_INIT(&io_buffer_desc->buffer_head);
+
+    io_buffer_desc->buffer_pool_p = buffer_pool_new();
+    if (!io_buffer_desc->buffer_pool_p)
+        return 145;
     
     return 0;
 }
@@ -23,9 +27,9 @@ io_buffer_entry_t *io_buffer_q_find(uint64_t q_id)
 
     CIRCLEQ_FOREACH(io_buffer_entry, &io_buffer_desc->buffer_head, io_buffer_entry_p) {
         if (q_id == io_buffer_entry->q_desc_p->q_id)
-            break;
+            return io_buffer_entry;
     }
-    return io_buffer_entry;
+    return NULL;
 }
 
 int io_buffer_init_q(io_buffer_entry_t **io_buffer_entry, uint64_t q_id, size_t q_size_max)
@@ -39,6 +43,22 @@ int io_buffer_init_q(io_buffer_entry_t **io_buffer_entry, uint64_t q_id, size_t 
     if (!(*io_buffer_entry)->q_desc_p) {
         free(*io_buffer_entry);
         return 120;
+    }
+
+    int rc = buffer_pool_dequeue(&io_buffer_desc->buffer_pool_p->buffer_pool_free_list, 
+                        &((*io_buffer_entry)->buffer_entry_p));
+    if (rc) {
+        q_free((*io_buffer_entry)->q_desc_p);
+        free(*io_buffer_entry);
+        return rc;
+    }
+
+    rc = buffer_pool_enqueue(&io_buffer_desc->buffer_pool_p->buffer_pool_allocated_list, 
+                        (*io_buffer_entry)->buffer_entry_p);
+    if (rc) {
+        q_free((*io_buffer_entry)->q_desc_p);
+        free(*io_buffer_entry);
+        return rc;
     }
 
     return 0;
@@ -175,7 +195,7 @@ int q_free(q_desc_t *q_desc)
     
     int rc;
     q_entry_t *q_entry;
-    for (; !CIRCLEQ_EMPTY(&q_desc->q_head); spdk_free(q_release_entry(q_entry))) {
+    for (; !CIRCLEQ_EMPTY(&q_desc->q_head); q_release_entry(q_entry)) {
         rc = q_dequeue(q_desc, &q_entry);
         if (rc)
             return rc;
@@ -220,6 +240,10 @@ int io_buffer_reset_zone(uint64_t zslba, bool select_all)
             rc = q_free(io_buffer_entry->q_desc_p);
             if (rc)
                 return rc;
+            
+            rc = buffer_pool_reset_entry(io_buffer_desc->buffer_pool_p, io_buffer_entry->buffer_entry_p);
+            if (rc)
+                return rc;
         }
 
         CIRCLEQ_INIT(&io_buffer_desc->buffer_head);
@@ -233,6 +257,10 @@ int io_buffer_reset_zone(uint64_t zslba, bool select_all)
         if (rc)
             return rc;
         
+        rc = buffer_pool_reset_entry(io_buffer_desc->buffer_pool_p, io_buffer_entry->buffer_entry_p);
+        if (rc)
+            return rc;
+
         io_buffer_remove(io_buffer_entry);
         free(io_buffer_entry);
     }
@@ -242,7 +270,8 @@ int io_buffer_reset_zone(uint64_t zslba, bool select_all)
 
 int io_buffer_open_zone(uint64_t zslba, bool select_all)
 {
-    return 0;
+    io_buffer_entry_t *io_buffer_entry = io_buffer_q_find(zslba);
+    return buffer_pool_allocate_entry(io_buffer_desc->buffer_pool_p, &io_buffer_entry);
 }
 
 int io_buffer_close_zone(uint64_t zslba, bool select_all)

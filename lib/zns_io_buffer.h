@@ -1,6 +1,6 @@
 #include <spdk/stdinc.h>
-#include <spdk/queue.h>
 #include <spdk/env.h>
+#include "zns_io_buffer_pool.h"
 
 /*
  *      The zns_io_buffer is implemented by Linux CIRCLEQ
@@ -17,6 +17,7 @@ typedef struct q_desc_t q_desc_t;
 CIRCLEQ_HEAD(buffer_head_t, io_buffer_entry_t);
 struct io_buffer_desc_t {
     struct buffer_head_t buffer_head;
+    buffer_pool_t *buffer_pool_p;
     uint32_t q_nums;
     uint32_t q_max_nums;
 };
@@ -25,6 +26,7 @@ struct io_buffer_entry_t {
     CIRCLEQ_ENTRY(io_buffer_entry_t) io_buffer_entry_p;
     io_buffer_desc_t *io_buffer_desc_p;
     q_desc_t *q_desc_p;
+    buffer_pool_entry_t *buffer_entry_p;
 };
 
 CIRCLEQ_HEAD(q_head_t, q_entry_t);

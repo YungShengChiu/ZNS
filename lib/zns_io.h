@@ -27,4 +27,6 @@ int zns_io_update(uint64_t lba, zns_io_update_cb cb_fn, void *cb_arg);
 
 int zns_io_read(void **payload, uint64_t lba, uint32_t lba_count);
 
+void *zns_io_malloc(size_t size, uint64_t zslba);
+
 #endif

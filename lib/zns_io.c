@@ -139,6 +139,13 @@ int zns_env_init(struct spdk_env_opts *opts, char *opts_name, struct spdk_nvme_t
         return rc;
     }
 
+    rc = buffer_pool_init(io_buffer_desc->buffer_pool_p, io_buffer_desc->q_max_nums, 
+                        zns_info->nr_blocks_in_zone << zns_info->pow2_block_size, zns_info->block_size);
+    if (rc) {
+        zns_env_fini();
+        return rc;
+    }
+
     rc = _init_zns_io_lock();
     if (rc) {
         zns_env_fini();
@@ -155,9 +162,12 @@ void zns_env_fini(void)
     for (uint64_t z_id = 0; z_id < zns_info->nr_zones; z_id++)
         zns_lock_zone(z_id);
     
+    if (io_buffer_desc)
+        buffer_pool_free(io_buffer_desc->buffer_pool_p);
+    
     io_buffer_free();
     io_map_free();
-
+    
     if (zns_io_lock) {
         pthread_mutex_destroy(&zns_io_lock->wb_lock);
         pthread_mutex_destroy(&zns_io_lock->io_buffer_lock);
@@ -245,7 +255,7 @@ static int _wb_zone(io_buffer_entry_t *io_buffer_entry)
             }
             for (; !args->is_complete; spdk_nvme_qpair_process_completions(zns_info->spdk_struct->qpair, 0));
 
-            spdk_free(q_release_entry(q_entry));
+            q_release_entry(q_entry);
         } else {
             lba_count = 1;
         }
@@ -254,6 +264,11 @@ static int _wb_zone(io_buffer_entry_t *io_buffer_entry)
     rc = q_free(io_buffer_entry->q_desc_p);
     if (rc == 130)
         free(io_buffer_entry->q_desc_p);
+    
+    rc = buffer_pool_reset_entry(io_buffer_desc->buffer_pool_p, io_buffer_entry->buffer_entry_p);
+    if (rc)
+        return rc;
+
     free(io_buffer_entry);
     free(args);
 
@@ -272,6 +287,7 @@ static void _wb_zone_start(void *arg)
             break;
     
         default:
+            printf("wb rc = %d\n", rc);
             zns_io_buf_lock();
             io_buffer_insert_tail(io_buffer_entry);
             zns_io_buf_unlock();
@@ -860,7 +876,7 @@ int zns_io_read(void **payload, uint64_t lba, uint32_t lba_count)
         case 0x1:
             /* The data is in io_buffer */
             q_entry = io_map_get_q_entry(lba);
-            *payload = spdk_malloc(data_size, zns_info->block_size, NULL, SPDK_ENV_SOCKET_ID_ANY, SPDK_MALLOC_DMA);
+            *payload = spdk_dma_malloc(data_size, zns_info->block_size, NULL);
             memcpy(*payload, q_entry->payload, data_size);
 
             io_buffer_q_upsert(q_entry);
@@ -882,7 +898,7 @@ int zns_io_read(void **payload, uint64_t lba, uint32_t lba_count)
             args->lba_count = lba_count;
             args->is_complete = false;
 
-            *payload = spdk_malloc(data_size, zns_info->block_size, NULL, SPDK_ENV_SOCKET_ID_ANY, SPDK_MALLOC_DMA);
+            *payload = spdk_dma_malloc(data_size, zns_info->block_size, NULL);
             rc = spdk_nvme_ns_cmd_read(zns_info->spdk_struct->ns, zns_info->spdk_struct->qpair, 
                         *payload, io_map_get_lba(lba), lba_count, _zns_zone_io_cb, args, 0);
             if (rc) {
@@ -897,7 +913,7 @@ int zns_io_read(void **payload, uint64_t lba, uint32_t lba_count)
         case 0x3:
             /* The data is in ZNS and io_buffer */
             q_entry = io_map_get_q_entry(lba);
-            *payload = spdk_malloc(data_size, zns_info->block_size, NULL, SPDK_ENV_SOCKET_ID_ANY, SPDK_MALLOC_DMA);
+            *payload = spdk_dma_malloc(data_size, zns_info->block_size, NULL);
             memcpy(*payload, q_entry->payload, data_size);
             io_buffer_q_upsert(q_entry);
             io_buffer_upsert(q_entry->q_desc_p->io_buffer_entry_p);
@@ -911,4 +927,19 @@ int zns_io_read(void **payload, uint64_t lba, uint32_t lba_count)
     zns_unlock_zone(z_id);
 
     return 0;
+}
+
+void *zns_io_malloc(size_t size, uint64_t zslba)
+{
+    if (zslba >= zns_info->nr_blocks_in_ns)
+        return NULL;
+    
+    if (size > (zns_info->nr_blocks_in_zone << zns_info->pow2_block_size))
+        return NULL;
+    io_buffer_entry_t *io_buffer_entry  = io_buffer_q_find(zslba);
+    if (!io_buffer_entry)
+        return spdk_dma_malloc(size, zns_info->block_size, NULL);
+    void *data = io_buffer_entry->buffer_entry_p->sp;
+    io_buffer_entry->buffer_entry_p->sp += size;
+    return data;
 }
