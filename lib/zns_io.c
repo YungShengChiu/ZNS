@@ -167,7 +167,7 @@ void zns_env_fini(void)
     
     io_buffer_free();
     io_map_free();
-    
+
     if (zns_io_lock) {
         pthread_mutex_destroy(&zns_io_lock->wb_lock);
         pthread_mutex_destroy(&zns_io_lock->io_buffer_lock);
@@ -367,7 +367,6 @@ int zns_open_zone(uint64_t zslba, bool select_all)
             return 1201;
 
         case ZONE_STATE_EMPTY:
-        case ZONE_STATE_IMP_OPEN:
         case ZONE_STATE_CLOSED:
             int rc;
             for (; io_buffer_desc->q_nums >= io_buffer_desc->q_max_nums;) {
@@ -377,7 +376,8 @@ int zns_open_zone(uint64_t zslba, bool select_all)
                     return rc;
                 }
             }
-            
+
+        case ZONE_STATE_IMP_OPEN:
             /**
              *      args should be release in the callback function
              */
@@ -452,10 +452,25 @@ int zns_close_zone(uint64_t zslba, bool select_all)
             zns_io_buf_unlock();
             
             zns_wb_lock();
-            pthread_t wb_tid;
-            for (; pthread_create(&wb_tid, NULL, _wb_zone_start, io_buffer_entry); 
-                fprintf(stderr, "pthread_create() failed!\n"));
-            
+
+            int rc = _wb_zone(io_buffer_entry);
+            switch (rc)
+            {
+                case 150:
+                case 151:
+                case 0:
+                    break;
+    
+                default:
+                    fprintf(stderr, "wb rc = %d\n", rc);
+                    zns_io_buf_lock();
+                    io_buffer_insert_tail(io_buffer_entry);
+                    zns_io_buf_unlock();
+                    break;
+            }
+
+            zns_wb_unlock();
+
             /**
              *      args should be release in the callback function
              */
@@ -467,7 +482,7 @@ int zns_close_zone(uint64_t zslba, bool select_all)
             args->select_all = select_all;
             args->is_complete = false;
 
-            int rc = spdk_nvme_zns_close_zone(zns_info->spdk_struct->ns, zns_info->spdk_struct->qpair, 
+            rc = spdk_nvme_zns_close_zone(zns_info->spdk_struct->ns, zns_info->spdk_struct->qpair, 
                         zslba, select_all, _zns_zone_manage_cb, args);
             if (rc) {
                 zns_unlock_zone(z_id);
@@ -527,9 +542,24 @@ int zns_finish_zone(uint64_t zslba, bool select_all)
             zns_io_buf_unlock();
 
             zns_wb_lock();
-            pthread_t wb_tid;
-            for (; pthread_create(&wb_tid, NULL, _wb_zone_start, io_buffer_entry); 
-                fprintf(stderr, "pthread_create() failed!\n"));
+
+            rc = _wb_zone(io_buffer_entry);
+            switch (rc)
+            {
+                case 150:
+                case 151:
+                case 0:
+                    break;
+    
+                default:
+                    fprintf(stderr, "wb rc = %d\n", rc);
+                    zns_io_buf_lock();
+                    io_buffer_insert_tail(io_buffer_entry);
+                    zns_io_buf_unlock();
+                    break;
+            }
+
+            zns_wb_unlock();
 
             /**
              *      args should be release in the callback function
@@ -651,7 +681,6 @@ int zns_io_append(void *payload, uint64_t zslba, uint32_t lba_count)
     uint64_t z_id = zslba / zns_info->nr_blocks_in_zone;
     zns_lock_zone(z_id);
 
-    //size_t data_size = lba_count << zns_info->pow2_block_size;
     uint64_t wp = io_map_get_buf_wp(z_id);
     io_buffer_entry_t *io_buffer_entry = NULL;
     q_entry_t *q_entry = NULL;
@@ -941,5 +970,6 @@ void *zns_io_malloc(size_t size, uint64_t zslba)
         return spdk_dma_malloc(size, zns_info->block_size, NULL);
     void *data = io_buffer_entry->buffer_entry_p->sp;
     io_buffer_entry->buffer_entry_p->sp += size;
+
     return data;
 }
