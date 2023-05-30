@@ -1,6 +1,7 @@
 emulator/
 vm/
 output/
+spdk/
 *.tar
 *.tar.*
 *.qcow2

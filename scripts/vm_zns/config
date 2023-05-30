@@ -12,7 +12,7 @@ SPDK_DIR=${ROOT_DIR}/spdk
 # Variables for SPDK configuration
 #
 
-SPDK_VERSION=22.01.2
+SPDK_VERSION=23.01.1
 
 
 #
