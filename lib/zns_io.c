@@ -973,3 +973,33 @@ void *zns_io_malloc(size_t size, uint64_t zslba)
 
     return data;
 }
+
+const spdk_struct_t *zns_get_spdk_struct(void)
+{
+    return (const spdk_struct_t *)zns_info->spdk_struct;
+}
+
+uint64_t zns_get_nr_zones(void)
+{
+    return zns_info->nr_zones;
+}
+
+uint64_t zns_get_nr_blocks_in_ns(void)
+{
+    return zns_info->nr_blocks_in_ns;
+}
+
+uint64_t zns_get_nr_blocks_in_zone(void)
+{
+    return zns_info->nr_blocks_in_zone;
+}
+
+size_t zns_get_block_size(void)
+{
+    return zns_info->block_size;
+}
+
+uint32_t zns_get_zone_append_size_limit(void)
+{
+    return zns_info->zasl;
+}
