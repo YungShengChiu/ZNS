@@ -696,13 +696,6 @@ int zns_io_append(void *payload, uint64_t zslba, uint32_t lba_count)
                 zns_unlock_zone(z_id);
                 return rc;
             }
-
-            rc = io_buffer_init_q(&io_buffer_entry, zslba, zns_info->nr_blocks_in_zone);
-            if (rc) {
-                //  TODO: error handling
-                zns_unlock_zone(z_id);
-                return rc;
-            }
             
             for (; io_buffer_desc->q_nums >= io_buffer_desc->q_max_nums;) {
                 rc = zns_close_zone(io_buffer_q_last()->q_desc_p->q_id, false);
@@ -711,6 +704,13 @@ int zns_io_append(void *payload, uint64_t zslba, uint32_t lba_count)
                     zns_unlock_zone(z_id);
                     return rc;
                 }
+            }
+
+            rc = io_buffer_init_q(&io_buffer_entry, zslba, zns_info->nr_blocks_in_zone);
+            if (rc) {
+                //  TODO: error handling
+                zns_unlock_zone(z_id);
+                return rc;
             }
             
             rc = q_enqueue(io_buffer_entry->q_desc_p, &q_entry, payload, lba_count);
