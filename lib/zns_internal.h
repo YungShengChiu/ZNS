@@ -14,6 +14,8 @@ struct zns_info_t {
     uint64_t nr_blocks_in_zone;
     size_t block_size;
     uint32_t zasl;
+    uint32_t qd;
+    uint32_t outstanding_io;
     uint8_t pow2_block_size;
 };
 

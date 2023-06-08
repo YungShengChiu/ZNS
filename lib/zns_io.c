@@ -53,7 +53,10 @@ static int _init_spdk(struct spdk_env_opts *opts, struct spdk_nvme_transport_id 
     if (!spdk_nvme_ns_is_active(zns_info->spdk_struct->ns)) 
         return 555;
     
-    zns_info->spdk_struct->qpair = spdk_nvme_ctrlr_alloc_io_qpair(zns_info->spdk_struct->ctrlr, NULL, 0);
+    struct spdk_nvme_io_qpair_opts qpair_opts;
+    spdk_nvme_ctrlr_get_default_io_qpair_opts(zns_info->spdk_struct->ctrlr, &qpair_opts, sizeof(qpair_opts));
+    zns_info->qd = qpair_opts.io_queue_size;
+    zns_info->spdk_struct->qpair = spdk_nvme_ctrlr_alloc_io_qpair(zns_info->spdk_struct->ctrlr, &qpair_opts, sizeof(qpair_opts));
     if (!zns_info->spdk_struct->qpair)
         return 556;
 
@@ -210,7 +213,7 @@ static void _zns_zone_io_cb(void *arg, const struct spdk_nvme_cpl *cpl)
         //  TODO: error handling
     }
 
-    args->is_complete = true;
+    zns_info->outstanding_io--;
 }
 
 static int _wb_zone(io_buffer_entry_t *io_buffer_entry)
@@ -245,7 +248,9 @@ static int _wb_zone(io_buffer_entry_t *io_buffer_entry)
             
             args->lba = lba;
             args->lba_count = lba_count;
-            args->is_complete = false;
+            zns_info->outstanding_io++;
+
+            for (; zns_info->outstanding_io > zns_info->qd; spdk_nvme_qpair_process_completions(zns_info->spdk_struct->qpair, 0));
             rc = spdk_nvme_zns_zone_append(zns_info->spdk_struct->ns, zns_info->spdk_struct->qpair, 
                         q_entry->payload, zslba, lba_count, _zns_zone_io_cb, args, 0);
             if (rc) {
@@ -253,13 +258,13 @@ static int _wb_zone(io_buffer_entry_t *io_buffer_entry)
                 free(args);
                 return rc;
             }
-            for (; !args->is_complete; spdk_nvme_qpair_process_completions(zns_info->spdk_struct->qpair, 0));
 
             q_release_entry(q_entry);
         } else {
             lba_count = 1;
         }
     }
+    for (; zns_info->outstanding_io; spdk_nvme_qpair_process_completions(zns_info->spdk_struct->qpair, 0));
 
     rc = q_free(io_buffer_entry->q_desc_p);
     if (rc == 130)
@@ -287,7 +292,7 @@ static void _wb_zone_start(void *arg)
             break;
     
         default:
-            printf("wb rc = %d\n", rc);
+            //fprintf(stderr, "wb rc = %d\n", rc);
             zns_io_buf_lock();
             io_buffer_insert_tail(io_buffer_entry);
             zns_io_buf_unlock();
@@ -314,9 +319,8 @@ static void _zns_zone_manage_cb(void *arg, const struct spdk_nvme_cpl *cpl)
         //  TODO: error handling
     }
     
-    zns_unlock_zone(args->z_id);
-    args->is_complete = true;
-    
+    free(args);
+    zns_info->outstanding_io--;
 }
 
 int zns_reset_zone(uint64_t zslba, bool select_all)
@@ -334,7 +338,7 @@ int zns_reset_zone(uint64_t zslba, bool select_all)
     args->zslba = zslba;
     args->z_id = z_id;
     args->select_all = select_all;
-    args->is_complete = false;
+    zns_info->outstanding_io++;
     
     /**
      *      The lock should be unlock in the callback function
@@ -342,6 +346,7 @@ int zns_reset_zone(uint64_t zslba, bool select_all)
     
     zns_lock_zone(z_id);
     
+    for (; zns_info->outstanding_io > zns_info->qd; spdk_nvme_qpair_process_completions(zns_info->spdk_struct->qpair, 0));
     int rc = spdk_nvme_zns_reset_zone(zns_info->spdk_struct->ns, zns_info->spdk_struct->qpair, 
                         zslba, select_all, _zns_zone_manage_cb, args);
     if (rc) {
@@ -349,9 +354,8 @@ int zns_reset_zone(uint64_t zslba, bool select_all)
         free(args);
         return rc;
     }
-    for (; !args->is_complete; spdk_nvme_qpair_process_completions(zns_info->spdk_struct->qpair, 0));
 
-    free(args);
+    zns_unlock_zone(z_id);
 
     return 0;
 }
@@ -388,7 +392,7 @@ int zns_open_zone(uint64_t zslba, bool select_all)
             args->zslba = zslba;
             args->z_id = z_id;
             args->select_all = select_all;
-            args->is_complete = false;
+            zns_info->outstanding_io++;
 
             /**
              *      The lock should be unlock in the callback function
@@ -396,6 +400,7 @@ int zns_open_zone(uint64_t zslba, bool select_all)
             
             zns_lock_zone(z_id);
 
+            for (; zns_info->outstanding_io > zns_info->qd; spdk_nvme_qpair_process_completions(zns_info->spdk_struct->qpair, 0));
             rc = spdk_nvme_zns_open_zone(zns_info->spdk_struct->ns, zns_info->spdk_struct->qpair, 
                         zslba, select_all, _zns_zone_manage_cb, args);
             if (rc) {
@@ -403,7 +408,9 @@ int zns_open_zone(uint64_t zslba, bool select_all)
                 free(args);
                 return rc;
             }
-            for (; !args->is_complete; spdk_nvme_qpair_process_completions(zns_info->spdk_struct->qpair, 0));
+
+            zns_unlock_zone(z_id);
+
             break;
 
         case ZONE_STATE_FULL:
@@ -418,8 +425,6 @@ int zns_open_zone(uint64_t zslba, bool select_all)
         default:
             return 1200;
     }
-
-    free(args);
 
     return 0;
 }
@@ -480,8 +485,9 @@ int zns_close_zone(uint64_t zslba, bool select_all)
             args->zslba = zslba;
             args->z_id = z_id;
             args->select_all = select_all;
-            args->is_complete = false;
+            zns_info->outstanding_io++;
 
+            for (; zns_info->outstanding_io > zns_info->qd; spdk_nvme_qpair_process_completions(zns_info->spdk_struct->qpair, 0));
             rc = spdk_nvme_zns_close_zone(zns_info->spdk_struct->ns, zns_info->spdk_struct->qpair, 
                         zslba, select_all, _zns_zone_manage_cb, args);
             if (rc) {
@@ -489,7 +495,6 @@ int zns_close_zone(uint64_t zslba, bool select_all)
                 free(args);
                 return rc;
             }
-            for (; !args->is_complete; spdk_nvme_qpair_process_completions(zns_info->spdk_struct->qpair, 0));
             
             break;
 
@@ -508,8 +513,8 @@ int zns_close_zone(uint64_t zslba, bool select_all)
         default:
             return 1200;
     }
-    
-    free(args);
+
+    zns_unlock_zone(z_id);
 
     return 0;
 }
@@ -570,8 +575,9 @@ int zns_finish_zone(uint64_t zslba, bool select_all)
             args->zslba = zslba;
             args->z_id = z_id;
             args->select_all = select_all;
-            args->is_complete = false;
+            zns_info->outstanding_io++;
 
+            for (; zns_info->outstanding_io > zns_info->qd; spdk_nvme_qpair_process_completions(zns_info->spdk_struct->qpair, 0));
             rc = spdk_nvme_zns_finish_zone(zns_info->spdk_struct->ns, zns_info->spdk_struct->qpair, 
                         zslba, select_all, _zns_zone_manage_cb, args);
             if (rc) {
@@ -579,7 +585,6 @@ int zns_finish_zone(uint64_t zslba, bool select_all)
                 free(args);
                 return rc;
             }
-            for (; !args->is_complete; spdk_nvme_qpair_process_completions(zns_info->spdk_struct->qpair, 0));
 
             break;
         case ZONE_STATE_CLOSED:
@@ -592,7 +597,7 @@ int zns_finish_zone(uint64_t zslba, bool select_all)
             args->zslba = zslba;
             args->z_id = z_id;
             args->select_all = select_all;
-            args->is_complete = false;
+            zns_info->outstanding_io++;
 
             /**
              *      The lock should be unlock in the callback function
@@ -600,6 +605,7 @@ int zns_finish_zone(uint64_t zslba, bool select_all)
 
             zns_lock_zone(z_id);
 
+            for (; zns_info->outstanding_io > zns_info->qd; spdk_nvme_qpair_process_completions(zns_info->spdk_struct->qpair, 0));
             rc = spdk_nvme_zns_finish_zone(zns_info->spdk_struct->ns, zns_info->spdk_struct->qpair, 
                         zslba, select_all, _zns_zone_manage_cb, args);
             if (rc) {
@@ -607,7 +613,6 @@ int zns_finish_zone(uint64_t zslba, bool select_all)
                 free(args);
                 return rc;
             }
-            for (; !args->is_complete; spdk_nvme_qpair_process_completions(zns_info->spdk_struct->qpair, 0));
 
             break;
         
@@ -624,7 +629,7 @@ int zns_finish_zone(uint64_t zslba, bool select_all)
             return 1200;
     }
 
-    free(args);
+    zns_unlock_zone(z_id);
 
     return 0;
 }
@@ -882,13 +887,17 @@ int zns_io_read(void **payload, uint64_t lba, uint32_t lba_count)
     if (lba >= zns_info->nr_blocks_in_ns)
         return 1100;
     
-    if(!payload)
+    if (!payload)
         return 1000;
     
     uint64_t z_id = lba / zns_info->nr_blocks_in_zone;
     zns_lock_zone(z_id);
-    
+
     size_t data_size = lba_count << zns_info->pow2_block_size;
+    
+    if (!(*payload))
+        *payload = spdk_dma_malloc(data_size, zns_info->block_size, NULL);
+    
     q_entry_t *q_entry;
     int rc;
     switch (io_map_get_identifier(lba))
@@ -905,7 +914,7 @@ int zns_io_read(void **payload, uint64_t lba, uint32_t lba_count)
         case 0x1:
             /* The data is in io_buffer */
             q_entry = io_map_get_q_entry(lba);
-            *payload = spdk_dma_malloc(data_size, zns_info->block_size, NULL);
+            //*payload = spdk_dma_malloc(data_size, zns_info->block_size, NULL);
             memcpy(*payload, q_entry->payload, data_size);
 
             io_buffer_q_upsert(q_entry);
@@ -925,9 +934,9 @@ int zns_io_read(void **payload, uint64_t lba, uint32_t lba_count)
             args->z_id = z_id;
             args->lba = lba;
             args->lba_count = lba_count;
-            args->is_complete = false;
+            zns_info->outstanding_io++;
 
-            *payload = spdk_dma_malloc(data_size, zns_info->block_size, NULL);
+            for (; zns_info->outstanding_io > zns_info->qd; spdk_nvme_qpair_process_completions(zns_info->spdk_struct->qpair, 0));
             rc = spdk_nvme_ns_cmd_read(zns_info->spdk_struct->ns, zns_info->spdk_struct->qpair, 
                         *payload, io_map_get_lba(lba), lba_count, _zns_zone_io_cb, args, 0);
             if (rc) {
@@ -935,14 +944,13 @@ int zns_io_read(void **payload, uint64_t lba, uint32_t lba_count)
                 free(args);
                 return rc;
             }
-            for (; !args->is_complete; spdk_nvme_qpair_process_completions(zns_info->spdk_struct->qpair, 0));
 
             break;
         
         case 0x3:
             /* The data is in ZNS and io_buffer */
             q_entry = io_map_get_q_entry(lba);
-            *payload = spdk_dma_malloc(data_size, zns_info->block_size, NULL);
+            //*payload = spdk_dma_malloc(data_size, zns_info->block_size, NULL);
             memcpy(*payload, q_entry->payload, data_size);
             io_buffer_q_upsert(q_entry);
             io_buffer_upsert(q_entry->q_desc_p->io_buffer_entry_p);

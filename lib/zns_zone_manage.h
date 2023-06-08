@@ -19,7 +19,6 @@ struct zone_management_args_t {
     uint64_t zslba;
     uint64_t z_id;
     bool select_all;
-    bool is_complete;
 };
 
 struct zone_io_args_t {
@@ -28,7 +27,6 @@ struct zone_io_args_t {
     uint64_t z_id;
     uint64_t lba;
     uint32_t lba_count;
-    bool is_complete;
 };
 
 extern zns_io_lock_t *zns_io_lock;
