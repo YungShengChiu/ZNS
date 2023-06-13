@@ -38,6 +38,8 @@ int zns_io_read(void **payload, uint64_t lba, uint32_t lba_count);
 
 void *zns_io_malloc(size_t size, uint64_t zslba);
 
+void zns_wait_io_complete(void);
+
 const spdk_struct_t *zns_get_spdk_struct(void);
 
 uint64_t zns_get_nr_zones(void);

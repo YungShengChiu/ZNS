@@ -213,6 +213,7 @@ static void _zns_zone_io_cb(void *arg, const struct spdk_nvme_cpl *cpl)
         //  TODO: error handling
     }
 
+    free(args);
     zns_info->outstanding_io--;
 }
 
@@ -230,14 +231,6 @@ static int _wb_zone(io_buffer_entry_t *io_buffer_entry)
     uint32_t lba_count;
     q_entry_t *q_entry = NULL;
 
-    /**
-     *      args should be release in the callback function
-     */
-    zone_io_args_t *args = (zone_io_args_t *)malloc(sizeof(zone_io_args_t));
-    args->cb_fn = zns_append_zone_cb;
-    args->zslba = zslba;
-    args->z_id = z_id;
-    
     int rc;
     for (uint64_t offset = 0; offset < zns_info->nr_blocks_in_zone; offset += lba_count) {
         lba = zslba + offset;
@@ -245,7 +238,14 @@ static int _wb_zone(io_buffer_entry_t *io_buffer_entry)
             q_entry = io_map_get_q_entry(lba);
             lba_count = q_entry->size;
             q_remove(q_entry);
-            
+
+            /**
+             *      args should be release in the callback function
+             */
+            zone_io_args_t *args = (zone_io_args_t *)malloc(sizeof(zone_io_args_t));
+            args->cb_fn = zns_append_zone_cb;
+            args->zslba = zslba;
+            args->z_id = z_id;
             args->lba = lba;
             args->lba_count = lba_count;
             zns_info->outstanding_io++;
@@ -269,13 +269,12 @@ static int _wb_zone(io_buffer_entry_t *io_buffer_entry)
     rc = q_free(io_buffer_entry->q_desc_p);
     if (rc == 130)
         free(io_buffer_entry->q_desc_p);
-    
+
     rc = buffer_pool_reset_entry(io_buffer_desc->buffer_pool_p, io_buffer_entry->buffer_entry_p);
     if (rc)
         return rc;
 
     free(io_buffer_entry);
-    free(args);
 
     return 0;
 }
@@ -354,6 +353,8 @@ int zns_reset_zone(uint64_t zslba, bool select_all)
         free(args);
         return rc;
     }
+
+    for (; zns_info->outstanding_io; spdk_nvme_qpair_process_completions(zns_info->spdk_struct->qpair, 0));
 
     zns_unlock_zone(z_id);
 
@@ -882,12 +883,12 @@ int zns_io_update(uint64_t lba, zns_io_update_cb cb_fn, void *cb_arg)
  *      payload is a parameter that points to a pointer to the data buffer.
  */
 
-int zns_io_read(void **payload, uint64_t lba, uint32_t lba_count)
+int zns_io_read(void **payload_p, uint64_t lba, uint32_t lba_count)
 {
     if (lba >= zns_info->nr_blocks_in_ns)
         return 1100;
     
-    if (!payload)
+    if (!payload_p)
         return 1000;
     
     uint64_t z_id = lba / zns_info->nr_blocks_in_zone;
@@ -895,8 +896,9 @@ int zns_io_read(void **payload, uint64_t lba, uint32_t lba_count)
 
     size_t data_size = lba_count << zns_info->pow2_block_size;
     
-    if (!(*payload))
-        *payload = spdk_dma_malloc(data_size, zns_info->block_size, NULL);
+    void *payload = *payload_p;
+    if (!payload)
+        payload = spdk_dma_malloc(data_size, zns_info->block_size, NULL);
     
     q_entry_t *q_entry;
     int rc;
@@ -915,7 +917,7 @@ int zns_io_read(void **payload, uint64_t lba, uint32_t lba_count)
             /* The data is in io_buffer */
             q_entry = io_map_get_q_entry(lba);
             //*payload = spdk_dma_malloc(data_size, zns_info->block_size, NULL);
-            memcpy(*payload, q_entry->payload, data_size);
+            memcpy(payload, q_entry->payload, data_size);
 
             io_buffer_q_upsert(q_entry);
             io_buffer_upsert(q_entry->q_desc_p->io_buffer_entry_p);
@@ -938,7 +940,7 @@ int zns_io_read(void **payload, uint64_t lba, uint32_t lba_count)
 
             for (; zns_info->outstanding_io > zns_info->qd; spdk_nvme_qpair_process_completions(zns_info->spdk_struct->qpair, 0));
             rc = spdk_nvme_ns_cmd_read(zns_info->spdk_struct->ns, zns_info->spdk_struct->qpair, 
-                        *payload, io_map_get_lba(lba), lba_count, _zns_zone_io_cb, args, 0);
+                        payload, io_map_get_lba(lba), lba_count, _zns_zone_io_cb, args, 0);
             if (rc) {
                 zns_unlock_zone(z_id);
                 free(args);
@@ -951,7 +953,7 @@ int zns_io_read(void **payload, uint64_t lba, uint32_t lba_count)
             /* The data is in ZNS and io_buffer */
             q_entry = io_map_get_q_entry(lba);
             //*payload = spdk_dma_malloc(data_size, zns_info->block_size, NULL);
-            memcpy(*payload, q_entry->payload, data_size);
+            memcpy(payload, q_entry->payload, data_size);
             io_buffer_q_upsert(q_entry);
             io_buffer_upsert(q_entry->q_desc_p->io_buffer_entry_p);
             
@@ -980,6 +982,11 @@ void *zns_io_malloc(size_t size, uint64_t zslba)
     io_buffer_entry->buffer_entry_p->sp += size;
 
     return data;
+}
+
+void zns_wait_io_complete(void)
+{
+    for (; zns_info->outstanding_io; spdk_nvme_qpair_process_completions(zns_info->spdk_struct->qpair, 0));
 }
 
 const spdk_struct_t *zns_get_spdk_struct(void)
