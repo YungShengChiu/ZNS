@@ -783,6 +783,15 @@ int zns_io_append(void *payload, uint64_t zslba, uint32_t lba_count)
                 return rc;
             }
 
+            for (; io_buffer_desc->q_nums >= io_buffer_desc->q_max_nums;) {
+                rc = zns_close_zone(io_buffer_q_last()->q_desc_p->q_id, false);
+                if (rc) {
+                    //  TODO: error handling
+                    zns_unlock_zone(z_id);
+                    return rc;
+                }
+            }
+            
             uint64_t available_blocks = 
                     zns_info->nr_blocks_in_zone - (io_map_get_z_wp(z_id) - zslba);
             
@@ -791,15 +800,6 @@ int zns_io_append(void *payload, uint64_t zslba, uint32_t lba_count)
                 //  TODO: error handling
                 zns_unlock_zone(z_id);
                 return rc;
-            }
-
-            for (; io_buffer_desc->q_nums >= io_buffer_desc->q_max_nums;) {
-                rc = zns_close_zone(io_buffer_q_last()->q_desc_p->q_id, false);
-                if (rc) {
-                    //  TODO: error handling
-                    zns_unlock_zone(z_id);
-                    return rc;
-                }
             }
 
             rc = q_enqueue(io_buffer_entry->q_desc_p, &q_entry, payload, lba_count);
@@ -916,7 +916,6 @@ int zns_io_read(void **payload_p, uint64_t lba, uint32_t lba_count)
         case 0x1:
             /* The data is in io_buffer */
             q_entry = io_map_get_q_entry(lba);
-            //*payload = spdk_dma_malloc(data_size, zns_info->block_size, NULL);
             memcpy(payload, q_entry->payload, data_size);
 
             io_buffer_q_upsert(q_entry);
@@ -952,7 +951,6 @@ int zns_io_read(void **payload_p, uint64_t lba, uint32_t lba_count)
         case 0x3:
             /* The data is in ZNS and io_buffer */
             q_entry = io_map_get_q_entry(lba);
-            //*payload = spdk_dma_malloc(data_size, zns_info->block_size, NULL);
             memcpy(payload, q_entry->payload, data_size);
             io_buffer_q_upsert(q_entry);
             io_buffer_upsert(q_entry->q_desc_p->io_buffer_entry_p);
