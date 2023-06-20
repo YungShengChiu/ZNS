@@ -909,10 +909,10 @@ int zns_io_read(void **payload_p, uint64_t lba, uint32_t lba_count)
             zns_unlock_zone(z_id);
             return 300;
         
-        case 0x0:
+        //case 0x0:
             /* The data is not in ZNS nor io_buffer */
-            zns_unlock_zone(z_id);
-            return 301;
+            //zns_unlock_zone(z_id);
+            //return 301;
         
         case 0x1:
             /* The data is in io_buffer */
@@ -924,6 +924,7 @@ int zns_io_read(void **payload_p, uint64_t lba, uint32_t lba_count)
             
             break;
         
+        case 0x0:
         case 0x2:
             /* The data is in ZNS */
             /* The data won't be buffered */
