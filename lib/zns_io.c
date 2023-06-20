@@ -27,7 +27,7 @@ static void _attach_cb(void *cb_ctx, const struct spdk_nvme_transport_id *trid,
     zns_info->spdk_struct->ctrlr = ctrlr;
 }
 
-static int _init_spdk(struct spdk_env_opts *opts, struct spdk_nvme_transport_id *trid, uint32_t nsid)
+static int _init_spdk(struct spdk_env_opts *opts, struct spdk_nvme_transport_id *trid, uint32_t nsid, uint32_t qd)
 {
     if (!zns_info->spdk_struct)
         return 501;
@@ -55,7 +55,7 @@ static int _init_spdk(struct spdk_env_opts *opts, struct spdk_nvme_transport_id 
     
     struct spdk_nvme_io_qpair_opts qpair_opts;
     spdk_nvme_ctrlr_get_default_io_qpair_opts(zns_info->spdk_struct->ctrlr, &qpair_opts, sizeof(qpair_opts));
-    zns_info->qd = qpair_opts.io_queue_size;
+    zns_info->qd = (qd <= qpair_opts.io_queue_size) ? qd : qpair_opts.io_queue_size;
     zns_info->spdk_struct->qpair = spdk_nvme_ctrlr_alloc_io_qpair(zns_info->spdk_struct->ctrlr, &qpair_opts, sizeof(qpair_opts));
     if (!zns_info->spdk_struct->qpair)
         return 556;
@@ -102,7 +102,7 @@ static int _init_zns_io_lock(void)
     return 0;
 }
 
-int zns_env_init(struct spdk_env_opts *opts, char *opts_name, struct spdk_nvme_transport_id *trid, uint32_t nsid)
+int zns_env_init(struct spdk_env_opts *opts, char *opts_name, struct spdk_nvme_transport_id *trid, uint32_t nsid, uint32_t qd)
 {
     if (!opts || !trid || !opts_name)
         return 1000;
@@ -113,7 +113,7 @@ int zns_env_init(struct spdk_env_opts *opts, char *opts_name, struct spdk_nvme_t
     if (rc)
         return rc;
     
-    rc = _init_spdk(opts, trid, nsid);
+    rc = _init_spdk(opts, trid, nsid, qd);
     if (rc) {
         zns_env_fini();
         return rc;
@@ -123,10 +123,11 @@ int zns_env_init(struct spdk_env_opts *opts, char *opts_name, struct spdk_nvme_t
     zns_info->nr_blocks_in_ns = spdk_nvme_ns_get_num_sectors(zns_info->spdk_struct->ns);
     zns_info->nr_blocks_in_zone = spdk_nvme_zns_ns_get_zone_size_sectors(zns_info->spdk_struct->ns);
     zns_info->block_size = spdk_nvme_ns_get_sector_size(zns_info->spdk_struct->ns);
-    zns_info->zasl = spdk_nvme_zns_ctrlr_get_max_zone_append_size(zns_info->spdk_struct->ctrlr);
     
     for (size_t size = 1; size != zns_info->block_size; size <<= 1)
         zns_info->pow2_block_size++;
+    
+    zns_info->zasl = spdk_nvme_zns_ctrlr_get_max_zone_append_size(zns_info->spdk_struct->ctrlr) >> zns_info->pow2_block_size;
     
     io_buffer_desc = io_buffer_new();
     rc = io_buffer_init(spdk_nvme_zns_ns_get_max_open_zones(zns_info->spdk_struct->ns));

@@ -16,7 +16,7 @@ struct spdk_struct_t {
     struct spdk_nvme_qpair *qpair;
 };
 
-int zns_env_init(struct spdk_env_opts *opts, char *opts_name, struct spdk_nvme_transport_id *trid, uint32_t nsid);
+int zns_env_init(struct spdk_env_opts *opts, char *opts_name, struct spdk_nvme_transport_id *trid, uint32_t nsid, uint32_t qd);
 
 void zns_env_fini(void);
 
