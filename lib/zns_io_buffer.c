@@ -244,6 +244,8 @@ int io_buffer_reset_zone(uint64_t zslba, bool select_all)
             rc = buffer_pool_reset_entry(io_buffer_desc->buffer_pool_p, io_buffer_entry->buffer_entry_p);
             if (rc)
                 return rc;
+            
+            free(io_buffer_entry);
         }
 
         CIRCLEQ_INIT(&io_buffer_desc->buffer_head);

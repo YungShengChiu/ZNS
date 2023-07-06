@@ -355,8 +355,8 @@ int zns_reset_zone(uint64_t zslba, bool select_all)
         return rc;
     }
 
-    for (; zns_info->outstanding_io; spdk_nvme_qpair_process_completions(zns_info->spdk_struct->qpair, 0));
-
+    //for (; zns_info->outstanding_io; spdk_nvme_qpair_process_completions(zns_info->spdk_struct->qpair, 0));
+    zns_wait_io_complete();
     zns_unlock_zone(z_id);
 
     return 0;
@@ -367,6 +367,7 @@ int zns_open_zone(uint64_t zslba, bool select_all)
     if (zslba >= zns_info->nr_blocks_in_ns)
         return 1100;
     
+    uint64_t z_id = zslba / zns_info->nr_blocks_in_zone;
     zone_management_args_t *args = NULL;
     switch (io_map_state(zslba)) {
         case ZONE_STATE_EXP_OPEN:
@@ -388,7 +389,6 @@ int zns_open_zone(uint64_t zslba, bool select_all)
              *      args should be release in the callback function
              */
 
-            uint64_t z_id = zslba / zns_info->nr_blocks_in_zone;
             args = (zone_management_args_t *)malloc(sizeof(zone_management_args_t));
             args->cb_fn = zns_open_zone_cb;
             args->zslba = zslba;
@@ -411,8 +411,6 @@ int zns_open_zone(uint64_t zslba, bool select_all)
                 return rc;
             }
 
-            zns_unlock_zone(z_id);
-
             break;
 
         case ZONE_STATE_FULL:
@@ -427,6 +425,9 @@ int zns_open_zone(uint64_t zslba, bool select_all)
         default:
             return 1200;
     }
+
+    zns_wait_io_complete();
+    zns_unlock_zone(z_id);
 
     return 0;
 }
@@ -516,6 +517,7 @@ int zns_close_zone(uint64_t zslba, bool select_all)
             return 1200;
     }
 
+    zns_wait_io_complete();
     zns_unlock_zone(z_id);
 
     return 0;
@@ -631,6 +633,7 @@ int zns_finish_zone(uint64_t zslba, bool select_all)
             return 1200;
     }
 
+    zns_wait_io_complete();
     zns_unlock_zone(z_id);
 
     return 0;
@@ -902,6 +905,7 @@ int zns_io_read(void **payload_p, uint64_t lba, uint32_t lba_count)
         payload = spdk_dma_malloc(data_size, zns_info->block_size, NULL);
     
     q_entry_t *q_entry;
+    zone_io_args_t *args;
     int rc;
     switch (io_map_get_identifier(lba))
     {
@@ -909,8 +913,25 @@ int zns_io_read(void **payload_p, uint64_t lba, uint32_t lba_count)
             zns_unlock_zone(z_id);
             return 300;
         
-        //case 0x0:
+        case 0x0:
             /* The data is not in ZNS nor io_buffer */
+            args = (zone_io_args_t *)malloc(sizeof(zone_io_args_t));
+            args->cb_fn = zns_read_zone_cb;
+            args->z_id = z_id;
+            args->lba = lba;
+            args->lba_count = lba_count;
+            zns_info->outstanding_io++;
+            
+            for (; zns_info->outstanding_io > zns_info->qd; spdk_nvme_qpair_process_completions(zns_info->spdk_struct->qpair, 0));
+            rc = spdk_nvme_ns_cmd_read(zns_info->spdk_struct->ns, zns_info->spdk_struct->qpair, 
+                        payload, lba, lba_count, _zns_zone_io_cb, args, 0);
+            if (rc) {
+                zns_unlock_zone(z_id);
+                free(args);
+                return rc;
+            }
+
+            break;
             //zns_unlock_zone(z_id);
             //return 301;
         
@@ -924,7 +945,6 @@ int zns_io_read(void **payload_p, uint64_t lba, uint32_t lba_count)
             
             break;
         
-        case 0x0:
         case 0x2:
             /* The data is in ZNS */
             /* The data won't be buffered */
@@ -932,7 +952,7 @@ int zns_io_read(void **payload_p, uint64_t lba, uint32_t lba_count)
             /**
              *      args should be release in the callback function
              */
-            zone_io_args_t *args = (zone_io_args_t *)malloc(sizeof(zone_io_args_t));
+            args = (zone_io_args_t *)malloc(sizeof(zone_io_args_t));
             args->cb_fn = zns_read_zone_cb;
             args->z_id = z_id;
             args->lba = lba;
